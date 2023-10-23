@@ -1,0 +1,3 @@
+domain: snappcloud.io
+repo: github.com/snapp-incubator/contour-auth-multi-tenant
+version: "2"

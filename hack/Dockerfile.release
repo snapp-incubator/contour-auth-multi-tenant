@@ -1,0 +1,3 @@
+FROM scratch
+COPY contour-auth-multi-tenant /
+ENTRYPOINT ["/contour-auth-multi-tenant"]

@@ -1,0 +1,14 @@
+# Adds namespace to all resources.
+namespace: projectcontour-auth
+
+bases:
+- ../htpasswd
+- ../oidc
+
+resources:
+- namespace.yaml
+- issuer.yaml
+
+
+
+
