@@ -33,8 +33,6 @@ import (
 )
 
 const (
-	// AnnotationAuthType marks Secrets that can be used for basic Auth.
-	AnnotationAuthType = "auth.contour.snappcloud.io/type"
 	// AnnotationAuthRealm marks Secrets that match our authentication realm.
 	AnnotationAuthRealm = "auth.contour.snappcloud.io/realm"
 	secretRefKey        = "secretRef"
@@ -128,11 +126,6 @@ func (h *Htpasswd) Check(ctx context.Context, request *Request) (*Response, erro
 }
 
 func (h *Htpasswd) verifyFetchSecretData(secret *v1.Secret) (bool, []byte) {
-	// Only look at basic auth Secrets.
-	if secret.Annotations[AnnotationAuthType] != "basic" {
-		return false, nil
-	}
-
 	// Accept the secret if it is for our realm or for any realm.
 	if realm := secret.Annotations[AnnotationAuthRealm]; realm != "" {
 		if realm != h.Realm && realm != "*" {

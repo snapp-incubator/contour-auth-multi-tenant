@@ -41,7 +41,6 @@ func TestHtpasswdAuth(t *testing.T) {
 				Name:      "notmatched-label",
 				Namespace: "notmatched",
 				Annotations: map[string]string{
-					AnnotationAuthType:  "basic",
 					AnnotationAuthRealm: "*",
 				},
 			},
@@ -54,29 +53,11 @@ func TestHtpasswdAuth(t *testing.T) {
 		// filtered by wrong annotation
 		&v1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "notmatched-annotation-auth-realm",
+				Name:      "notmatched-annotation",
 				Namespace: "notmatched",
-				Labels:    map[string]string{"app": "authserver"},
+				Labels:    map[string]string{"auth.contour.snappcloud.io/type": "basic"},
 				Annotations: map[string]string{
-					AnnotationAuthType:  "basic",
 					AnnotationAuthRealm: "wrong",
-				},
-			},
-			Type: v1.SecretTypeOpaque,
-			Data: map[string][]byte{
-				// user=notmatched, pass=notmatched
-				"auth": []byte("notmatched:$apr1$4W6cRE66$iANZepJfRTrpk3OxlzxAC0"),
-			},
-		},
-		// filtered by wrong annotation
-		&v1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "notmatched-annotation-auth-type",
-				Namespace: "notmatched",
-				Labels:    map[string]string{"app": "authserver"},
-				Annotations: map[string]string{
-					AnnotationAuthType:  "wrong",
-					AnnotationAuthRealm: "*",
 				},
 			},
 			Type: v1.SecretTypeOpaque,
@@ -89,9 +70,8 @@ func TestHtpasswdAuth(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "example1",
 				Namespace: "ns1",
-				Labels:    map[string]string{"app": "authserver"},
+				Labels:    map[string]string{"auth.contour.snappcloud.io/type": "basic"},
 				Annotations: map[string]string{
-					AnnotationAuthType:  "basic",
 					AnnotationAuthRealm: "*",
 				},
 			},
@@ -105,9 +85,8 @@ func TestHtpasswdAuth(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "example2",
 				Namespace: "ns1",
-				Labels:    map[string]string{"app": "authserver"},
+				Labels:    map[string]string{"auth.contour.snappcloud.io/type": "basic"},
 				Annotations: map[string]string{
-					AnnotationAuthType:  "basic",
 					AnnotationAuthRealm: "*",
 				},
 			},
@@ -119,7 +98,7 @@ func TestHtpasswdAuth(t *testing.T) {
 		},
 	)
 
-	selector, err := labels.Parse("app=authserver")
+	selector, err := labels.Parse("auth.contour.snappcloud.io/type=basic")
 	if err != nil {
 		t.Fatalf("failed to parse selector: %s", err)
 	}
@@ -158,9 +137,7 @@ func TestHtpasswdAuth(t *testing.T) {
 	//nolint:lll
 	assert.False(t, auth.Match("notmatched", "notmatched", "notmatched/notmatched-label"), "auth for notmatched:notmatched should fail (filtered by label selector)")
 	//nolint:lll
-	assert.False(t, auth.Match("notmatched", "notmatched", "notmatched/notmatched-annotation-auth-realm"), "auth for notmatched:notmatched should fail (filtered by wrong annotation)")
-	//nolint:lll
-	assert.False(t, auth.Match("notmatched", "notmatched", "notmatched/notmatched-annotation-auth-type"), "auth for notmatched:notmatched should fail (filtered by wrong annotation)")
+	assert.False(t, auth.Match("notmatched", "notmatched", "notmatched/notmatched-annotation"), "auth for notmatched:notmatched should fail (filtered by wrong annotation)")
 
 	// Check an unauthorized response.
 	response, err := auth.Check(context.TODO(), &Request{
