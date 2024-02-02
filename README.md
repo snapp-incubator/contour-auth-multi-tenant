@@ -11,8 +11,7 @@ backends that are selected by subcommands.
 ## Key Features:
 - **Multi-Tenancy Support**: One of the standout features of contour-auth-multi-tenant is its built-in support for multi-tenancy. This allows us to securely manage and isolate authorization scopes for different tenants within a single instance.
 
-- **Enhanced Performance**: 
-contour-auth-multi-tenant has meticulously been optimized to deliver outstanding performance under heavy loads. This ensures that your application's authorization layer can handle requests efficiently, without introducing bottlenecks or delays.
+- **Enhanced Performance**: contour-auth-multi-tenant has meticulously been optimized to deliver outstanding performance under heavy loads. This ensures that your application's authorization layer can handle requests efficiently, without introducing bottlenecks or delays.
 
 # htpasswd
 
