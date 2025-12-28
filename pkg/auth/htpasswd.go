@@ -54,22 +54,23 @@ type Creds struct {
 
 // Match authenticates the credential against the htpasswd file.
 func (h *Htpasswd) Match(user, pass, secretRef string) bool {
-	secretRefSlice := strings.Split(secretRef, "/")
-	if len(secretRefSlice) != 2 {
+	// Use strings.Cut for better performance (zero allocation vs strings.Split)
+	namespace, secretName, ok := strings.Cut(secretRef, "/")
+	if !ok || namespace == "" || secretName == "" {
 		//nolint:lll
 		h.Log.Info("secret reference in HTTPProxy auth context is invalid, it must be in the form of \"namespace/secretName\"", "secretRef", secretRef)
 		return false
 	}
 
 	h.Creds.Mu.RLock()
-	namespaceMap, namespaceExists := h.Creds.Map[secretRefSlice[0]]
+	namespaceMap, namespaceExists := h.Creds.Map[namespace]
 	if !namespaceExists {
 		h.Creds.Mu.RUnlock()
 		//nolint:lll
-		h.Log.Info("no HTTP basic authentication credential found for Secret reference, namespace does not exist", "secretRef", secretRef, "namespace", secretRefSlice[0])
+		h.Log.Info("no HTTP basic authentication credential found for Secret reference, namespace does not exist", "secretRef", secretRef, "namespace", namespace)
 		return false
 	}
-	passwd, found := namespaceMap[secretRefSlice[1]]
+	passwd, found := namespaceMap[secretName]
 	h.Creds.Mu.RUnlock()
 
 	if !found || passwd == nil {
@@ -169,7 +170,8 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 		return ctrl.Result{}, err
 	}
 
-	newSecretPasswdMap := make(map[string]*htpasswd.File)
+	// Pre-allocate map with expected size for better performance
+	newSecretPasswdMap := make(map[string]*htpasswd.File, len(secrets.Items))
 
 	for _, secret := range secrets.Items {
 		// avoid implicit memory aliasing in for loop

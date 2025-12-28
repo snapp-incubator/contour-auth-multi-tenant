@@ -94,7 +94,11 @@ type Response struct {
 // AsV2 converts to a v2 CheckResponse.
 func (r *Response) AsV2() *CheckResponseV2 {
 	convertHeaders := func(h http.Header) []*envoy_api_v2_core.HeaderValueOption {
-		var headers []*envoy_api_v2_core.HeaderValueOption
+		if len(h) == 0 {
+			return nil
+		}
+		// Pre-allocate slice to avoid repeated allocations
+		headers := make([]*envoy_api_v2_core.HeaderValueOption, 0, len(h))
 
 		for k, v := range h {
 			if len(v) == 0 {
@@ -139,7 +143,11 @@ func (r *Response) AsV2() *CheckResponseV2 {
 // AsV3 converts to a v3 CheckResponse.
 func (r *Response) AsV3() *CheckResponseV3 {
 	convertHeaders := func(h http.Header) []*envoy_config_core_v3.HeaderValueOption {
-		var headers []*envoy_config_core_v3.HeaderValueOption
+		if len(h) == 0 {
+			return nil
+		}
+		// Pre-allocate slice to avoid repeated allocations
+		headers := make([]*envoy_config_core_v3.HeaderValueOption, 0, len(h))
 
 		for k, v := range h {
 			if len(v) == 0 {

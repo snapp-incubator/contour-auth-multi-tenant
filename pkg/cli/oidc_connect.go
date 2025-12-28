@@ -77,6 +77,8 @@ func NewOIDCConnect() *cobra.Command {
 
 			srv, err := DefaultServer(cmd)
 			if err != nil {
+				// Clean up listener on error
+				listener.Close()
 				return ExitErrorf(EX_CONFIG, "invalid TLS configuration: %s", err)
 			}
 

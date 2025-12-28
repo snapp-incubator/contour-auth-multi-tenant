@@ -95,7 +95,8 @@ func NewHtpasswdCommand() *cobra.Command {
 
 			auth.RegisterServer(srv, htpasswd)
 
-			errChan := make(chan error)
+			// Use buffered channel to prevent goroutine leaks
+			errChan := make(chan error, 2)
 			ctx := ctrl.SetupSignalHandler()
 
 			go func() {
@@ -105,8 +106,8 @@ func NewHtpasswdCommand() *cobra.Command {
 
 				if err := auth.RunServer(ctx, listener, srv); err != nil {
 					errChan <- ExitErrorf(EX_FAIL, "authorization server failed: %w", err)
+					return
 				}
-
 				errChan <- nil
 			}()
 
@@ -115,15 +116,23 @@ func NewHtpasswdCommand() *cobra.Command {
 
 				if err := mgr.Start(ctx); err != nil {
 					errChan <- ExitErrorf(EX_FAIL, "controller manager failed: %w", err)
+					return
 				}
-
 				errChan <- nil
 			}()
 
+			// Wait for first error or completion
 			select {
 			case err := <-errChan:
-				return err
+				if err != nil {
+					return err
+				}
+				// First component finished without error, wait for second
+				return <-errChan
 			case <-ctx.Done():
+				// Wait for both goroutines to finish gracefully
+				<-errChan
+				<-errChan
 				return nil
 			}
 		},

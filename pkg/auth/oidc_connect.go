@@ -38,13 +38,15 @@ const (
 
 // OIDCConnect defines parameters for an OIDC auth provider.
 type OIDCConnect struct {
-	Log          logr.Logger
-	OidcConfig   *config.OIDCConfig
-	Cache        *bigcache.BigCache
-	HTTPClient   *http.Client
+	Log        logr.Logger
+	OidcConfig *config.OIDCConfig
+	Cache      *bigcache.BigCache
+	HTTPClient *http.Client
+
+	// Provider initialization with retry support
+	providerMu   sync.RWMutex
 	provider     *oidc.Provider
-	providerOnce sync.Once
-	providerErr  error
+	providerInit bool
 }
 
 // Implement interface.
@@ -59,22 +61,15 @@ func (o *OIDCConnect) Check(ctx context.Context, req *Request) (*Response, error
 		"id", req.ID,
 	)
 
-	// Initialize provider once using sync.Once for thread safety
-	o.providerOnce.Do(func() {
-		o.provider, o.providerErr = o.initProvider(ctx)
-		if o.providerErr != nil {
-			o.Log.Error(o.providerErr, "failed to initialize OIDC provider")
-		}
-	})
-
-	if o.providerErr != nil {
+	// Initialize provider with retry support on failure
+	if err := o.ensureProvider(ctx); err != nil {
 		return &Response{
 			Allow: false,
 			Response: http.Response{
 				StatusCode: http.StatusInternalServerError,
 				Header:     http.Header{},
 			},
-		}, o.providerErr
+		}, err
 	}
 
 	url := parseURL(req)
@@ -134,18 +129,15 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, url *url.U
 	// State exists, proceed with token validation.
 	if state != nil {
 		// Ensure provider is initialized
-		o.providerOnce.Do(func() {
-			o.provider, o.providerErr = o.initProvider(ctx)
-			if o.providerErr != nil {
-				o.Log.Error(o.providerErr, "failed to initialize provider")
-			}
-		})
-
-		if o.providerErr != nil {
-			return createResponse(http.StatusInternalServerError), false, o.providerErr
+		if err := o.ensureProvider(ctx); err != nil {
+			return createResponse(http.StatusInternalServerError), false, err
 		}
 
-		if o.isValidStateToken(ctx, state, o.provider) {
+		o.providerMu.RLock()
+		provider := o.provider
+		o.providerMu.RUnlock()
+
+		if o.isValidStateToken(ctx, state, provider) {
 			stateJSON, _ := json.Marshal(state)
 			// Restore cookies.
 			resp := createResponse(http.StatusOK)
@@ -320,26 +312,50 @@ func (o *OIDCConnect) getStateFromCookie(req *Request) (*store.OIDCState, error)
 	return nil, fmt.Errorf("no %q cookie", oauthTokenName)
 }
 
-// initProvider initialize oidc provide with ths given issuer URL. return oidc.Provider.
-func (o *OIDCConnect) initProvider(ctx context.Context) (*oidc.Provider, error) {
+// ensureProvider initializes the OIDC provider if not already initialized.
+// Unlike sync.Once, this allows retry on failure (e.g., if IDP was temporarily down).
+func (o *OIDCConnect) ensureProvider(ctx context.Context) error {
+	// Fast path: check if already initialized
+	o.providerMu.RLock()
+	if o.providerInit && o.provider != nil {
+		o.providerMu.RUnlock()
+		return nil
+	}
+	o.providerMu.RUnlock()
+
+	// Slow path: initialize with write lock
+	o.providerMu.Lock()
+	defer o.providerMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if o.providerInit && o.provider != nil {
+		return nil
+	}
+
 	provider, err := oidc.NewProvider(ctx, o.OidcConfig.IssuerURL)
 	if err != nil {
 		o.Log.Error(err, "Unable to initialize provider", "issuerUrl", o.OidcConfig.IssuerURL)
-		return nil, err
+		return err
 	}
 
-	return provider, nil
+	o.provider = provider
+	o.providerInit = true
+	return nil
 }
 
 // oauth2Config factory method to oauth2Config.
 func (o *OIDCConnect) oauth2Config() (*oauth2.Config, error) {
-	if o.provider == nil {
+	o.providerMu.RLock()
+	provider := o.provider
+	o.providerMu.RUnlock()
+
+	if provider == nil {
 		return nil, fmt.Errorf("OIDC provider not initialized")
 	}
 	return &oauth2.Config{
 		ClientID:     o.OidcConfig.ClientID,
 		ClientSecret: o.OidcConfig.ClientSecret,
-		Endpoint:     o.provider.Endpoint(),
+		Endpoint:     provider.Endpoint(),
 		Scopes:       o.OidcConfig.Scopes,
 		RedirectURL:  o.OidcConfig.RedirectURL + o.OidcConfig.RedirectPath,
 	}, nil
