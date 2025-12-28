@@ -58,17 +58,24 @@ func (h *Htpasswd) Match(user, pass, secretRef string) bool {
 	secretRefSlice := strings.Split(secretRef, "/")
 	if len(secretRefSlice) != 2 {
 		//nolint:lll
-		h.Log.Info(fmt.Sprintf("secret reference \"%s\" in HTTPProxy auth context is invalid, it must be in the form of \"namespace/secretName\"", secretRef))
+		h.Log.Info("secret reference in HTTPProxy auth context is invalid, it must be in the form of \"namespace/secretName\"", "secretRef", secretRef)
 		return false
 	}
 
 	h.Creds.Mu.RLock()
-	passwd, found := h.Creds.Map[secretRefSlice[0]][secretRefSlice[1]]
+	namespaceMap, namespaceExists := h.Creds.Map[secretRefSlice[0]]
+	if !namespaceExists {
+		h.Creds.Mu.RUnlock()
+		//nolint:lll
+		h.Log.Info("no HTTP basic authentication credential found for Secret reference, namespace does not exist", "secretRef", secretRef, "namespace", secretRefSlice[0])
+		return false
+	}
+	passwd, found := namespaceMap[secretRefSlice[1]]
 	h.Creds.Mu.RUnlock()
 
-	if !found {
+	if !found || passwd == nil {
 		//nolint:lll
-		h.Log.Info(fmt.Sprintf("no HTTP basic authentication credential found for Secret reference \"%s\", make sure the Secret has compatible annotations and labels.", secretRef))
+		h.Log.Info("no HTTP basic authentication credential found for Secret reference, make sure the Secret has compatible annotations and labels", "secretRef", secretRef)
 		return false
 	}
 
@@ -81,8 +88,9 @@ func (h *Htpasswd) Check(ctx context.Context, request *Request) (*Response, erro
 
 	secretRef, found := request.Context[secretRefKey]
 	if !found {
-		//nolint:lll
-		h.Log.Info(fmt.Sprintf("failed to find Secret reference key in HTTPProxy auth context of request with host=\"%s\" and path=\"%s\"", request.Request.URL.Host, request.Request.URL.Path))
+		h.Log.Info("failed to find Secret reference key in HTTPProxy auth context",
+			"host", request.Request.URL.Host,
+			"path", request.Request.URL.Path)
 	}
 
 	// If there's an "Authorization" header and we can verify
@@ -155,9 +163,6 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 		opts = append(opts, client.MatchingLabelsSelector{Selector: h.Selector})
 	}
 
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-
 	secrets := &v1.SecretList{}
 	if err := h.Client.List(ctx, secrets, opts...); err != nil {
 		return ctrl.Result{}, err
@@ -188,18 +193,22 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 		if err != nil {
 			h.Log.Error(err, "skipping malformed Secret",
 				"name", s.Name, "namespace", s.Namespace)
+			continue
 		}
 
-		if hasBadLine {
+		if hasBadLine || passwd == nil {
 			continue
 		}
 
 		newSecretPasswdMap[s.Name] = passwd
 	}
 
+	// Update the credentials map atomically with minimal lock time
+	h.Mu.Lock()
 	h.Creds.Mu.Lock()
 	h.Creds.Map[req.Namespace] = newSecretPasswdMap
 	h.Creds.Mu.Unlock()
+	h.Mu.Unlock()
 
 	return ctrl.Result{Requeue: false}, nil
 }

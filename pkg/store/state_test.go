@@ -26,7 +26,8 @@ func TestHtpasswdAuth(t *testing.T) {
 	// Make sure AuthState is empty
 	assert.Equal(t, false, len(state.OAuthState) > 0)
 
-	state.GenerateOauthState()
+	_, err := state.GenerateOauthState()
+	assert.NoError(t, err)
 	assert.Equal(t, true, len(state.OAuthState) > 0)
 	assert.Equal(t, true, state.IsNewToken())
 

@@ -16,6 +16,7 @@ package auth
 import (
 	"net/http"
 	"net/url"
+	"strings"
 
 	envoy_api_v2_core "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -96,9 +97,14 @@ func (r *Response) AsV2() *CheckResponseV2 {
 		var headers []*envoy_api_v2_core.HeaderValueOption
 
 		for k, v := range h {
+			if len(v) == 0 {
+				continue
+			}
+			// Join multiple header values with commas as per HTTP spec (RFC 7230)
+			value := strings.Join(v, ", ")
 			headers = append(headers,
 				&envoy_api_v2_core.HeaderValueOption{
-					Header: &envoy_api_v2_core.HeaderValue{Key: k, Value: v[0]},
+					Header: &envoy_api_v2_core.HeaderValue{Key: k, Value: value},
 				},
 			)
 		}
@@ -136,9 +142,14 @@ func (r *Response) AsV3() *CheckResponseV3 {
 		var headers []*envoy_config_core_v3.HeaderValueOption
 
 		for k, v := range h {
+			if len(v) == 0 {
+				continue
+			}
+			// Join multiple header values with commas as per HTTP spec (RFC 7230)
+			value := strings.Join(v, ", ")
 			headers = append(headers,
 				&envoy_config_core_v3.HeaderValueOption{
-					Header: &envoy_config_core_v3.HeaderValue{Key: k, Value: v[0]},
+					Header: &envoy_config_core_v3.HeaderValue{Key: k, Value: value},
 				},
 			)
 		}

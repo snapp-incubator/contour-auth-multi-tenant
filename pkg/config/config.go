@@ -87,7 +87,7 @@ func (cfg *OIDCConfig) Validate() error {
 		{cfg.ClientID == "", "no clientID specified"},
 		{cfg.ClientSecret == "" && !cfg.AllowEmptyClientSecret, "no clientSecret specified"},
 		{cfg.RedirectURL == "", "no redirectURL specified"},
-		{cfg.RedirectPath == "", "no redirectURL specified"},
+		{cfg.RedirectPath == "", "no redirectPath specified"},
 	}
 
 	for _, check := range checks {

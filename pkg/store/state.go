@@ -55,13 +55,13 @@ func ConvertToByte(s *OIDCState) []byte {
 }
 
 // ConvertToType Convert Byte to State.
-func ConvertToType(value []byte) *OIDCState {
+func ConvertToType(value []byte) (*OIDCState, error) {
 	state := &OIDCState{}
 	if err := json.Unmarshal(value, &state); err != nil {
-		fmt.Println(fmt.Errorf("could not unmarshal %v: ", err))
+		return nil, fmt.Errorf("could not unmarshal state: %w", err)
 	}
 
-	return state
+	return state, nil
 }
 
 // IsNewToken check if current state is new and token from idp is needed.
@@ -76,16 +76,16 @@ func (s *OIDCState) IsTokenReady() bool {
 
 // GenerateOauthState generates a new Oauth State from random bytes. The state define a unique request
 // from a particular user and used to identity user during callback or subsequent calls.
-func (s *OIDCState) GenerateOauthState() string {
+func (s *OIDCState) GenerateOauthState() (string, error) {
 	b := make([]byte, 32)
 
 	_, err := rand.Read(b)
 	if err != nil {
-		fmt.Println(fmt.Errorf("error reading random bytes generating OauthState: %v", err))
+		return "", fmt.Errorf("error reading random bytes generating OauthState: %w", err)
 	}
 
 	newState := base64.URLEncoding.EncodeToString(b)
 	s.OAuthState = newState
 
-	return newState
+	return newState, nil
 }

@@ -48,13 +48,26 @@ func NewOIDCConnect() *cobra.Command {
 
 			log.Info("init oidc... ")
 
-			bigCache, _ := bigcache.NewBigCache(bigcache.DefaultConfig(time.Duration(cfg.CacheTimeout) * time.Minute))
+			bigCache, err := bigcache.NewBigCache(bigcache.DefaultConfig(time.Duration(cfg.CacheTimeout) * time.Minute))
+			if err != nil {
+				return ExitErrorf(EX_CONFIG, "failed to create cache: %w", err)
+			}
+
+			// Create HTTP client with timeouts for security
+			httpClient := &http.Client{
+				Timeout: 30 * time.Second,
+				Transport: &http.Transport{
+					TLSHandshakeTimeout:   10 * time.Second,
+					ResponseHeaderTimeout: 10 * time.Second,
+					IdleConnTimeout:       90 * time.Second,
+				},
+			}
 
 			authOidc := &auth.OIDCConnect{
 				Log:        log,
 				OidcConfig: cfg,
 				Cache:      bigCache,
-				HTTPClient: http.DefaultClient, // need to handle client creation with TLS
+				HTTPClient: httpClient,
 			}
 
 			listener, err := net.Listen("tcp", authOidc.OidcConfig.Address)

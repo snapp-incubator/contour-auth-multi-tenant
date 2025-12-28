@@ -1,6 +1,6 @@
 module github.com/snapp-incubator/contour-auth-multi-tenant
 
-go 1.20
+go 1.25
 
 require (
 	github.com/allegro/bigcache v1.2.1

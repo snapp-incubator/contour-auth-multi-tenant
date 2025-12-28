@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/allegro/bigcache"
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -37,11 +38,13 @@ const (
 
 // OIDCConnect defines parameters for an OIDC auth provider.
 type OIDCConnect struct {
-	Log        logr.Logger
-	OidcConfig *config.OIDCConfig
-	Cache      *bigcache.BigCache
-	HTTPClient *http.Client
-	provider   *oidc.Provider
+	Log           logr.Logger
+	OidcConfig    *config.OIDCConfig
+	Cache         *bigcache.BigCache
+	HTTPClient    *http.Client
+	provider      *oidc.Provider
+	providerOnce  sync.Once
+	providerErr   error
 }
 
 // Implement interface.
@@ -56,11 +59,35 @@ func (o *OIDCConnect) Check(ctx context.Context, req *Request) (*Response, error
 		"id", req.ID,
 	)
 
-	if o.provider == nil {
-		o.provider, _ = o.initProvider(ctx)
+	// Initialize provider once using sync.Once for thread safety
+	o.providerOnce.Do(func() {
+		o.provider, o.providerErr = o.initProvider(ctx)
+		if o.providerErr != nil {
+			o.Log.Error(o.providerErr, "failed to initialize OIDC provider")
+		}
+	})
+
+	if o.providerErr != nil {
+		return &Response{
+			Allow: false,
+			Response: http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     http.Header{},
+			},
+		}, o.providerErr
 	}
 
 	url := parseURL(req)
+	if url == nil {
+		o.Log.Error(nil, "failed to parse request URL")
+		return &Response{
+			Allow: false,
+			Response: http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{},
+			},
+		}, fmt.Errorf("failed to parse request URL")
+	}
 
 	// Check if the current request matches the callback path.
 	if url.Path == o.OidcConfig.RedirectPath {
@@ -92,7 +119,11 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, url *url.U
 
 	stateByte, err := o.Cache.Get(stateToken)
 	if err == nil {
-		state = store.ConvertToType(stateByte)
+		state, err = store.ConvertToType(stateByte)
+		if err != nil {
+			o.Log.Error(err, "failed to convert state from cache")
+			state = nil
+		}
 	}
 
 	// State not found, try to retrieve from cookies.
@@ -102,14 +133,19 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, url *url.U
 
 	// State exists, proceed with token validation.
 	if state != nil {
-		// Re-initialize provider to refresh the context, this seems like bugs with coreos go-oidc module.
-		provider, err := o.initProvider(ctx)
-		if err != nil {
-			o.Log.Error(err, "fail to initialize provider")
-			return createResponse(http.StatusInternalServerError), false, err
+		// Ensure provider is initialized
+		o.providerOnce.Do(func() {
+			o.provider, o.providerErr = o.initProvider(ctx)
+			if o.providerErr != nil {
+				o.Log.Error(o.providerErr, "failed to initialize provider")
+			}
+		})
+
+		if o.providerErr != nil {
+			return createResponse(http.StatusInternalServerError), false, o.providerErr
 		}
 
-		if o.isValidStateToken(ctx, state, provider) {
+		if o.isValidStateToken(ctx, state, o.provider) {
 			stateJSON, _ := json.Marshal(state)
 			// Restore cookies.
 			resp := createResponse(http.StatusOK)
@@ -131,7 +167,11 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, url *url.U
 // loginHandler takes a url returning a Response with a new state that is required by oauth during initial user login.
 func (o *OIDCConnect) loginHandler(u *url.URL) Response {
 	state := store.NewState()
-	state.GenerateOauthState()
+	_, err := state.GenerateOauthState()
+	if err != nil {
+		o.Log.Error(err, "failed to generate oauth state")
+		return createResponse(http.StatusInternalServerError)
+	}
 	state.RequestPath = path.Join(u.Host, u.Path)
 	state.Scheme = u.Scheme
 
@@ -183,11 +223,15 @@ func (o *OIDCConnect) callbackHandler(ctx context.Context, u *url.URL) (Response
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
 		// 2.3.2 Token invalid, return Internal Server Error
-		return createResponse(http.StatusInternalServerError), fmt.Errorf("Invalid token id")
+		return createResponse(http.StatusInternalServerError), fmt.Errorf("invalid token id")
 	}
 
 	//Store token.
-	state := store.ConvertToType(stateByte)
+	state, err := store.ConvertToType(stateByte)
+	if err != nil {
+		o.Log.Error(err, "failed to convert state from cache")
+		return createResponse(http.StatusInternalServerError), fmt.Errorf("failed to parse state: %w", err)
+	}
 	state.IDToken = rawIDToken
 	state.AccessToken = token.AccessToken
 	state.RefreshToken = token.RefreshToken
@@ -252,7 +296,11 @@ func (o *OIDCConnect) getStateFromCookie(req *Request) (*store.OIDCState, error)
 			if strings.HasPrefix(c, oauthTokenName) {
 				cookieJSON := c[len(oauthTokenName)+1:]
 				if len(cookieJSON) > 0 {
-					state = store.ConvertToType([]byte(cookieJSON))
+					var err error
+					state, err = store.ConvertToType([]byte(cookieJSON))
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse cookie state: %w", err)
+					}
 					return state, nil
 				}
 			}

@@ -52,6 +52,11 @@ func (e ExitError) Error() string {
 	return ""
 }
 
+// Unwrap returns the underlying error for error wrapping support.
+func (e ExitError) Unwrap() error {
+	return e.Err
+}
+
 // ExitErrorf formats and error message along with the ExitCode.
 func ExitErrorf(code ExitCode, format string, args ...interface{}) error {
 	return &ExitError{
