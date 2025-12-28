@@ -113,7 +113,6 @@ func TestHtpasswdAuth(t *testing.T) {
 		Realm:    "default",
 		Creds:    creds,
 		Client:   client.Build(),
-		Mu:       &sync.Mutex{},
 		Selector: selector,
 	}
 

@@ -76,7 +76,6 @@ func NewHtpasswdCommand() *cobra.Command {
 				Client:   mgr.GetClient(),
 				Realm:    mustString(cmd.Flags().GetString("auth-realm")),
 				Creds:    creds,
-				Mu:       &sync.Mutex{},
 				Selector: secretsSelector,
 			}
 

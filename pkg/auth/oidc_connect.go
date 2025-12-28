@@ -38,13 +38,13 @@ const (
 
 // OIDCConnect defines parameters for an OIDC auth provider.
 type OIDCConnect struct {
-	Log           logr.Logger
-	OidcConfig    *config.OIDCConfig
-	Cache         *bigcache.BigCache
-	HTTPClient    *http.Client
-	provider      *oidc.Provider
-	providerOnce  sync.Once
-	providerErr   error
+	Log          logr.Logger
+	OidcConfig   *config.OIDCConfig
+	Cache        *bigcache.BigCache
+	HTTPClient   *http.Client
+	provider     *oidc.Provider
+	providerOnce sync.Once
+	providerErr  error
 }
 
 // Implement interface.
@@ -175,7 +175,12 @@ func (o *OIDCConnect) loginHandler(u *url.URL) Response {
 	state.RequestPath = path.Join(u.Host, u.Path)
 	state.Scheme = u.Scheme
 
-	authCodeURL := o.oauth2Config().AuthCodeURL(state.OAuthState)
+	oauthConfig, err := o.oauth2Config()
+	if err != nil {
+		o.Log.Error(err, "failed to get oauth2 config")
+		return createResponse(http.StatusInternalServerError)
+	}
+	authCodeURL := oauthConfig.AuthCodeURL(state.OAuthState)
 
 	byteState := store.ConvertToByte(state)
 	if err := o.Cache.Set(state.OAuthState, byteState); err != nil {
@@ -213,7 +218,12 @@ func (o *OIDCConnect) callbackHandler(ctx context.Context, u *url.URL) (Response
 	// Retrieve token. and check token validity
 	context := oidc.ClientContext(ctx, o.HTTPClient)
 
-	token, err := o.oauth2Config().Exchange(context, code)
+	oauthConfig, err := o.oauth2Config()
+	if err != nil {
+		o.Log.Error(err, "failed to get oauth2 config")
+		return createResponse(http.StatusInternalServerError), fmt.Errorf("failed to get oauth2 config: %w", err)
+	}
+	token, err := oauthConfig.Exchange(context, code)
 	if err != nil {
 		// 2.3.1 Token invalid, return Internal Server Error
 		o.Log.Error(err, "Token exchange error")
@@ -322,14 +332,17 @@ func (o *OIDCConnect) initProvider(ctx context.Context) (*oidc.Provider, error) 
 }
 
 // oauth2Config factory method to oauth2Config.
-func (o *OIDCConnect) oauth2Config() *oauth2.Config {
+func (o *OIDCConnect) oauth2Config() (*oauth2.Config, error) {
+	if o.provider == nil {
+		return nil, fmt.Errorf("OIDC provider not initialized")
+	}
 	return &oauth2.Config{
 		ClientID:     o.OidcConfig.ClientID,
 		ClientSecret: o.OidcConfig.ClientSecret,
 		Endpoint:     o.provider.Endpoint(),
 		Scopes:       o.OidcConfig.Scopes,
 		RedirectURL:  o.OidcConfig.RedirectURL + o.OidcConfig.RedirectPath,
-	}
+	}, nil
 }
 
 // createResponse helper class to create response. Accept status code and return Response.

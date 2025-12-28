@@ -44,7 +44,6 @@ type Htpasswd struct {
 	Realm    string
 	Client   client.Client
 	Creds    *Creds
-	Mu       *sync.Mutex
 	Selector labels.Selector
 }
 
@@ -79,6 +78,8 @@ func (h *Htpasswd) Match(user, pass, secretRef string) bool {
 		return false
 	}
 
+	// passwd pointer is safe to use here - we got the reference while holding the lock,
+	// and htpasswd.File objects are immutable once created
 	return passwd.Match(user, pass)
 }
 
@@ -204,11 +205,9 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 	}
 
 	// Update the credentials map atomically with minimal lock time
-	h.Mu.Lock()
 	h.Creds.Mu.Lock()
 	h.Creds.Map[req.Namespace] = newSecretPasswdMap
 	h.Creds.Mu.Unlock()
-	h.Mu.Unlock()
 
 	return ctrl.Result{Requeue: false}, nil
 }
