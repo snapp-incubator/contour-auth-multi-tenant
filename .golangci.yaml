@@ -3,25 +3,27 @@ run:
 
 linters:
   enable:
-  - bodyclose
-  - gocognit
-  - goconst
-  - gocyclo
-  - godot
-  - gofmt
-  - goimports
-  - golint
-  - goprintffuncname
-  - gosec
-  - govet
-  - lll
-  - misspell
-  - nakedret
-  - staticcheck
-  - unconvert
-  - unparam
-  - whitespace
-  - wsl
+    - bodyclose
+    - errcheck
+    - gocognit
+    - goconst
+    - gocyclo
+    - godot
+    - gofmt
+    - goimports
+    - goprintffuncname
+    - gosec
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - revive
+    - staticcheck
+    - typecheck
+    - unconvert
+    - unparam
+    - whitespace
 
 linters-settings:
   misspell:
@@ -30,10 +32,20 @@ linters-settings:
     simplify: true
   unparam:
     check-exported: false
-  govet:
-    exclude:
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: exported
+      - name: increment-decrement
+      - name: indent-error-flow
+      - name: range
+      - name: receiver-naming
+      - name: var-naming
 
 issues:
   exclude:
-    - Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*printf?|os\.(Un)?Setenv). is not checked
-
+    - "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*printf?|os\\.(Un)?Setenv). is not checked"

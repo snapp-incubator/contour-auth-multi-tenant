@@ -1,0 +1,50 @@
+# Git
+.git/
+.gitignore
+
+# Build outputs
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Documentation
+docs/
+*.md
+!go.md
+
+# CI/CD and tooling
+.github/
+.goreleaser.yml
+.golangci.yaml
+
+# Local development
+.gocache/
+.gopath/
+.gomodcache/
+.env
+.env.local
+.env.*.local
+
+# Coverage and test artifacts
+coverage.html
+coverage.txt
+*.log
+
+# Skaffold
+skaffold.yaml
+
