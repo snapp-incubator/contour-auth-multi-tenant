@@ -236,4 +236,3 @@ func TestApplyDefaults_DoesNotOverwrite(t *testing.T) {
 	assert.Equal(t, "/custom-callback", cfg.RedirectPath)
 	assert.Equal(t, []string{"openid"}, cfg.Scopes)
 }
-

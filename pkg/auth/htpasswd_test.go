@@ -129,7 +129,8 @@ func TestHtpasswdAuth(t *testing.T) {
 
 	namespaces := []string{"ns1", "notmatched"}
 	for _, namespace := range namespaces {
-		_, err := auth.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: namespace}})
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: namespace}}
+		_, err := auth.Reconcile(context.Background(), req)
 		assert.NoError(t, err, "reconciliation should not have failed")
 	}
 

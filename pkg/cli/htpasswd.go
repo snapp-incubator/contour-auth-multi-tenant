@@ -58,12 +58,12 @@ func NewHtpasswdCommand() *cobra.Command {
 
 			mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
 			if err != nil {
-				return ExitErrorf(EX_CONFIG, "failed to create controller manager: %s", err)
+				return ExitErrorf(ExConfig, "failed to create controller manager: %s", err)
 			}
 
 			secretsSelector, err := labels.Parse(mustString(cmd.Flags().GetString("selector")))
 			if err != nil {
-				return ExitErrorf(EX_CONFIG, "failed to parse secrets selector: %s", err)
+				return ExitErrorf(ExConfig, "failed to parse secrets selector: %s", err)
 			}
 
 			creds := &auth.Creds{
@@ -81,17 +81,17 @@ func NewHtpasswdCommand() *cobra.Command {
 			}
 
 			if err := htpasswd.RegisterWithManager(mgr); err != nil {
-				return ExitErrorf(EX_FAIL, "htpasswd controller registration failed: %w", err)
+				return ExitErrorf(ExFail, "htpasswd controller registration failed: %w", err)
 			}
 
 			listener, err := net.Listen("tcp", mustString(cmd.Flags().GetString("address")))
 			if err != nil {
-				return ExitError{EX_CONFIG, err}
+				return ExitError{ExConfig, err}
 			}
 
 			srv, err := DefaultServer(cmd)
 			if err != nil {
-				return ExitErrorf(EX_CONFIG, "invalid TLS configuration: %s", err)
+				return ExitErrorf(ExConfig, "invalid TLS configuration: %s", err)
 			}
 
 			auth.RegisterServer(srv, htpasswd)
@@ -105,7 +105,7 @@ func NewHtpasswdCommand() *cobra.Command {
 					"realm", htpasswd.Realm)
 
 				if err := auth.RunServer(ctx, listener, srv); err != nil {
-					errChan <- ExitErrorf(EX_FAIL, "authorization server failed: %w", err)
+					errChan <- ExitErrorf(ExFail, "authorization server failed: %w", err)
 					return
 				}
 
@@ -116,7 +116,7 @@ func NewHtpasswdCommand() *cobra.Command {
 				log.Info("started controller")
 
 				if err := mgr.Start(ctx); err != nil {
-					errChan <- ExitErrorf(EX_FAIL, "controller manager failed: %w", err)
+					errChan <- ExitErrorf(ExFail, "controller manager failed: %w", err)
 					return
 				}
 

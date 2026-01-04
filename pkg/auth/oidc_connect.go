@@ -206,7 +206,7 @@ func (o *OIDCConnect) callbackHandler(ctx context.Context, u *url.URL) (Response
 	// 2 Check state and code validity.
 	if code == "" || oauthState == "" {
 		// 2.1 Code and State is empty, return Bad Request
-		err := fmt.Errorf("Code and State is not available")
+		err := fmt.Errorf("code and state are not available")
 		return createResponse(http.StatusBadRequest), err
 	}
 
@@ -230,7 +230,7 @@ func (o *OIDCConnect) callbackHandler(ctx context.Context, u *url.URL) (Response
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
 		// 2.3.2 Token invalid, return Internal Server Error
-		return createResponse(http.StatusInternalServerError), fmt.Errorf("Invalid token id")
+		return createResponse(http.StatusInternalServerError), fmt.Errorf("invalid token id")
 	}
 
 	// Store token.

@@ -38,19 +38,19 @@ func NewOIDCConnect() *cobra.Command {
 
 			cfgFile, err := cmd.Flags().GetString("config")
 			if err != nil {
-				return ExitError{EX_CONFIG, err}
+				return ExitError{ExConfig, err}
 			}
 
 			cfg, err := config.NewConfig(cfgFile)
 			if err != nil {
-				return ExitError{EX_CONFIG, err}
+				return ExitError{ExConfig, err}
 			}
 
 			log.Info("init oidc... ")
 
 			bigCache, err := bigcache.New(ctx, bigcache.DefaultConfig(time.Duration(cfg.CacheTimeout)*time.Minute))
 			if err != nil {
-				return ExitErrorf(EX_CONFIG, "failed to create cache: %s", err)
+				return ExitErrorf(ExConfig, "failed to create cache: %s", err)
 			}
 
 			authOidc := &auth.OIDCConnect{
@@ -62,12 +62,12 @@ func NewOIDCConnect() *cobra.Command {
 
 			listener, err := net.Listen("tcp", authOidc.OidcConfig.Address)
 			if err != nil {
-				return ExitError{EX_CONFIG, err}
+				return ExitError{ExConfig, err}
 			}
 
 			srv, err := DefaultServer(cmd)
 			if err != nil {
-				return ExitErrorf(EX_CONFIG, "invalid TLS configuration: %s", err)
+				return ExitErrorf(ExConfig, "invalid TLS configuration: %s", err)
 			}
 
 			auth.RegisterServer(srv, authOidc)
