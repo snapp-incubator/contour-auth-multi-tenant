@@ -58,8 +58,7 @@ vet: ## Run go vet against code
 
 .PHONY: lint
 lint: ## Run linters
-	# Pinned commit corresponds to golangci-lint 2.6.1
-	go run github.com/golangci/golangci-lint/cmd/golangci-lint@e3b3bac run -v --exclude-use-default=false
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.2 run -v
 
 .PHONY: docker-build
 docker-build: ## Build the docker image
