@@ -150,7 +150,7 @@ func TestHtpasswdAuth(t *testing.T) {
 	})
 	require.NoError(t, err, "check should not have failed")
 	assert.Equal(t, http.StatusUnauthorized, response.Response.StatusCode)
-	assert.NotEmpty(t, response.Response.Header["WWW-Authenticate"])
+	assert.NotEmpty(t, response.Response.Header.Get("WWW-Authenticate"))
 
 	// Check an authorized response.
 	response, err = auth.Check(context.TODO(), &Request{
@@ -308,6 +308,12 @@ func TestHtpasswd_Reconcile_MalformedHtpasswd(t *testing.T) {
 		NamespacedName: types.NamespacedName{Namespace: "test-ns"},
 	})
 	require.NoError(t, err)
+
+	// Ensure malformed secret is not stored
+	nsCreds, ok := auth.Creds.Map["test-ns"]
+	require.True(t, ok)
+	_, exists := nsCreds["malformed"]
+	assert.False(t, exists)
 
 	// Should not find the secret since it's malformed
 	result := auth.Match("this", "is", "test-ns/malformed")

@@ -188,9 +188,16 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 		if err != nil {
 			h.Log.Error(err, "skipping malformed Secret",
 				"name", s.Name, "namespace", s.Namespace)
+			continue
 		}
 
 		if hasBadLine {
+			continue
+		}
+
+		if passwd == nil {
+			h.Log.Info("skipping Secret with empty credentials",
+				"name", s.Name, "namespace", s.Namespace)
 			continue
 		}
 
