@@ -83,7 +83,7 @@ func RegisterServer(srv *grpc.Server, c Checker) {
 
 // RunServer runs the server until signaled by stopChan.
 func RunServer(ctx context.Context, listener net.Listener, srv *grpc.Server) error {
-	errChan := make(chan error)
+	errChan := make(chan error, 1)
 
 	go func() {
 		errChan <- srv.Serve(listener)
@@ -93,7 +93,7 @@ func RunServer(ctx context.Context, listener net.Listener, srv *grpc.Server) err
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		srv.Stop()
+		srv.GracefulStop()
 		return nil
 	}
 }

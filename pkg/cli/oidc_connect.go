@@ -18,11 +18,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/allegro/bigcache/v3"
 	"github.com/snapp-incubator/contour-auth-multi-tenant/pkg/auth"
 	"github.com/snapp-incubator/contour-auth-multi-tenant/pkg/config"
 	"github.com/spf13/cobra"
-
-	"github.com/allegro/bigcache"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -33,7 +32,8 @@ func NewOIDCConnect() *cobra.Command {
 		Use:   "oidc Server [OPTIONS]",
 		Short: "Run a OIDC authentication server",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := ctrl.SetupSignalHandler()
 			log := ctrl.Log.WithName("auth.oidc")
 
 			cfgFile, err := cmd.Flags().GetString("config")
@@ -48,7 +48,10 @@ func NewOIDCConnect() *cobra.Command {
 
 			log.Info("init oidc... ")
 
-			bigCache, _ := bigcache.NewBigCache(bigcache.DefaultConfig(time.Duration(cfg.CacheTimeout) * time.Minute))
+			bigCache, err := bigcache.New(ctx, bigcache.DefaultConfig(time.Duration(cfg.CacheTimeout)*time.Minute))
+			if err != nil {
+				return ExitErrorf(EX_CONFIG, "failed to create cache: %s", err)
+			}
 
 			authOidc := &auth.OIDCConnect{
 				Log:        log,
@@ -70,7 +73,7 @@ func NewOIDCConnect() *cobra.Command {
 			auth.RegisterServer(srv, authOidc)
 
 			log.Info("started serving", "address", authOidc.OidcConfig.Address)
-			return auth.RunServer(ctrl.SetupSignalHandler(), listener, srv)
+			return auth.RunServer(ctx, listener, srv)
 		},
 	}
 

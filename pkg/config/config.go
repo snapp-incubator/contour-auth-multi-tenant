@@ -14,14 +14,27 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 )
 
-// OIDCConfig defines the configuration parameters uses to configure the OIDC provider.
+// Default configuration values.
+const (
+	DefaultAddress      = ":9080"
+	DefaultCacheTimeout = 40
+	DefaultRedirectPath = "/callback"
+)
+
+// DefaultScopes are the default OIDC scopes requested.
+var DefaultScopes = []string{"openid", "profile", "email"}
+
+// OIDCConfig defines the configuration parameters used to configure the OIDC provider.
 type OIDCConfig struct {
 	Address string `yaml:"address"`
 
@@ -40,60 +53,91 @@ type OIDCConfig struct {
 	CacheTimeout           int32    `yaml:"cacheTimeout"`
 	SkipIssuerCheck        bool     `yaml:"skipIssuerCheck"`
 
-	// T decide wether should this be use
 	SessionSecurityKey string `yaml:"sessionSecurityKey" envconfig:"SESSION_SECURITY_KEY"`
 }
 
 // NewConfig returns a Config struct from serialized config file.
 func NewConfig(configFile string) (*OIDCConfig, error) {
+	if configFile == "" {
+		return nil, errors.New("config file path is required")
+	}
+
 	cfg := &OIDCConfig{
-		CacheTimeout:    40,
+		CacheTimeout:    DefaultCacheTimeout,
 		SkipIssuerCheck: false,
 	}
 
-	if configFile != "" {
-		data, err := os.ReadFile(filepath.Clean(configFile))
-		if err != nil {
-			return nil, err
-		}
-
-		err = yaml.Unmarshal(data, cfg)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		return nil, fmt.Errorf("Config file path is required")
-	}
-
-	err := cfg.Validate()
+	data, err := os.ReadFile(filepath.Clean(configFile))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	if cfg.Address == "" {
-		cfg.Address = ":9080"
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	cfg.applyDefaults()
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil
 }
 
-// Validate verifies all properties of config struct are initialized.
-func (cfg *OIDCConfig) Validate() error {
-	checks := []struct {
-		bad    bool
-		errMsg string
-	}{
-		{cfg.IssuerURL == "", "no IssuerURL specified"},
-		{cfg.ClientID == "", "no clientID specified"},
-		{cfg.ClientSecret == "" && !cfg.AllowEmptyClientSecret, "no clientSecret specified"},
-		{cfg.RedirectURL == "", "no redirectURL specified"},
-		{cfg.RedirectPath == "", "no redirectURL specified"},
+// applyDefaults sets default values for unspecified configuration options.
+func (cfg *OIDCConfig) applyDefaults() {
+	if cfg.Address == "" {
+		cfg.Address = DefaultAddress
 	}
 
-	for _, check := range checks {
-		if check.bad {
-			return fmt.Errorf("invalid config: %s", check.errMsg)
-		}
+	if cfg.RedirectPath == "" {
+		cfg.RedirectPath = DefaultRedirectPath
+	}
+
+	if len(cfg.Scopes) == 0 {
+		cfg.Scopes = DefaultScopes
+	}
+}
+
+// Validate verifies all required properties of config struct are initialized.
+func (cfg *OIDCConfig) Validate() error {
+	var errs []string
+
+	if cfg.IssuerURL == "" {
+		errs = append(errs, "issuerURL is required")
+	} else if _, err := url.Parse(cfg.IssuerURL); err != nil {
+		errs = append(errs, fmt.Sprintf("issuerURL is invalid: %v", err))
+	}
+
+	if cfg.ClientID == "" {
+		errs = append(errs, "clientID is required")
+	}
+
+	if cfg.ClientSecret == "" && !cfg.AllowEmptyClientSecret {
+		errs = append(errs, "clientSecret is required (or set allowEmptyClientSecret: true)")
+	}
+
+	if cfg.RedirectURL == "" {
+		errs = append(errs, "redirectURL is required")
+	} else if u, err := url.Parse(cfg.RedirectURL); err != nil {
+		errs = append(errs, fmt.Sprintf("redirectURL is invalid: %v", err))
+	} else if u.Scheme != "http" && u.Scheme != "https" {
+		errs = append(errs, "redirectURL must use http or https scheme")
+	}
+
+	if cfg.RedirectPath == "" {
+		errs = append(errs, "redirectPath is required")
+	} else if !strings.HasPrefix(cfg.RedirectPath, "/") {
+		errs = append(errs, "redirectPath must start with /")
+	}
+
+	if cfg.CacheTimeout <= 0 {
+		errs = append(errs, "cacheTimeout must be positive")
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("invalid config: %s", strings.Join(errs, "; "))
 	}
 
 	return nil

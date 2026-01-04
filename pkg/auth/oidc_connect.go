@@ -21,8 +21,9 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 
-	"github.com/allegro/bigcache"
+	"github.com/allegro/bigcache/v3"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-logr/logr"
 	"github.com/snapp-incubator/contour-auth-multi-tenant/pkg/config"
@@ -41,6 +42,8 @@ type OIDCConnect struct {
 	OidcConfig *config.OIDCConfig
 	Cache      *bigcache.BigCache
 	HTTPClient *http.Client
+
+	providerMu sync.RWMutex
 	provider   *oidc.Provider
 }
 
@@ -56,43 +59,84 @@ func (o *OIDCConnect) Check(ctx context.Context, req *Request) (*Response, error
 		"id", req.ID,
 	)
 
-	if o.provider == nil {
-		o.provider, _ = o.initProvider(ctx)
+	if err := o.ensureProvider(ctx); err != nil {
+		o.Log.Error(err, "failed to initialize OIDC provider")
+		return &Response{
+			Allow: false,
+			Response: http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     http.Header{},
+			},
+		}, err
 	}
 
-	url := parseURL(req)
+	u := parseURL(req)
+	if u == nil {
+		o.Log.Error(nil, "failed to parse request URL")
+		return &Response{
+			Allow: false,
+			Response: http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{},
+			},
+		}, fmt.Errorf("failed to parse request URL")
+	}
 
 	// Check if the current request matches the callback path.
-	if url.Path == o.OidcConfig.RedirectPath {
-		resp, err := o.callbackHandler(ctx, url)
+	if u.Path == o.OidcConfig.RedirectPath {
+		resp, err := o.callbackHandler(ctx, u)
 		return &resp, err
 	}
 
 	// Validate the state.
-	resp, valid, err := o.isValidState(ctx, req, url)
+	resp, valid, err := o.isValidState(ctx, req, u)
 	if err != nil {
 		return &resp, err
 	}
 
 	// If state is invalid, redirect to login handler.
 	if !valid {
-		resp = o.loginHandler(url)
+		resp = o.loginHandler(u)
 		return &resp, nil
 	}
 
 	return &resp, nil
 }
 
+// ensureProvider initializes the OIDC provider if not already done (thread-safe).
+func (o *OIDCConnect) ensureProvider(ctx context.Context) error {
+	o.providerMu.RLock()
+	if o.provider != nil {
+		o.providerMu.RUnlock()
+		return nil
+	}
+	o.providerMu.RUnlock()
+
+	o.providerMu.Lock()
+	defer o.providerMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if o.provider != nil {
+		return nil
+	}
+
+	provider, err := o.initProvider(ctx)
+	if err != nil {
+		return err
+	}
+	o.provider = provider
+	return nil
+}
+
 // isValidState checks the user token and state validity for subsequent calls.
-func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, url *url.URL) (Response, bool, error) {
+func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, u *url.URL) (Response, bool, error) {
 	// Do we have stateid stored in querystring
 	var state *store.OIDCState
 
-	stateToken := url.Query().Get(stateQueryParamName)
+	stateToken := u.Query().Get(stateQueryParamName)
 
-	stateByte, err := o.Cache.Get(stateToken)
-	if err == nil {
-		state = store.ConvertToType(stateByte)
+	if stateByte, err := o.Cache.Get(stateToken); err == nil {
+		state, _ = store.ConvertToType(stateByte)
 	}
 
 	// State not found, try to retrieve from cookies.
@@ -131,7 +175,10 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, url *url.U
 // loginHandler takes a url returning a Response with a new state that is required by oauth during initial user login.
 func (o *OIDCConnect) loginHandler(u *url.URL) Response {
 	state := store.NewState()
-	state.GenerateOauthState()
+	if _, err := state.GenerateOauthState(); err != nil {
+		o.Log.Error(err, "failed to generate oauth state")
+		return createResponse(http.StatusInternalServerError)
+	}
 	state.RequestPath = path.Join(u.Host, u.Path)
 	state.Scheme = u.Scheme
 
@@ -186,8 +233,12 @@ func (o *OIDCConnect) callbackHandler(ctx context.Context, u *url.URL) (Response
 		return createResponse(http.StatusInternalServerError), fmt.Errorf("Invalid token id")
 	}
 
-	//Store token.
-	state := store.ConvertToType(stateByte)
+	// Store token.
+	state, err := store.ConvertToType(stateByte)
+	if err != nil {
+		o.Log.Error(err, "failed to parse state from cache")
+		return createResponse(http.StatusInternalServerError), err
+	}
 	state.IDToken = rawIDToken
 	state.AccessToken = token.AccessToken
 	state.RefreshToken = token.RefreshToken
@@ -237,24 +288,20 @@ func (o *OIDCConnect) isValidStateToken(ctx context.Context, state *store.OIDCSt
 	return true
 }
 
-// getStateFromCookie retrieve state token from cookie header and return the value as OIDCState.
+// getStateFromCookie retrieves state token from cookie header and returns the value as OIDCState.
 func (o *OIDCConnect) getStateFromCookie(req *Request) (*store.OIDCState, error) {
-	var state *store.OIDCState
-
 	cookieVal := req.Request.Header.Get("cookie")
+	if cookieVal == "" {
+		return nil, fmt.Errorf("no %q cookie", oauthTokenName)
+	}
 
-	// Check through and get the right cookies
-	if len(cookieVal) > 0 {
-		cookies := strings.Split(cookieVal, ";")
-
-		for _, c := range cookies {
-			c = strings.TrimSpace(c)
-			if strings.HasPrefix(c, oauthTokenName) {
-				cookieJSON := c[len(oauthTokenName)+1:]
-				if len(cookieJSON) > 0 {
-					state = store.ConvertToType([]byte(cookieJSON))
-					return state, nil
-				}
+	cookies := strings.Split(cookieVal, ";")
+	for _, c := range cookies {
+		c = strings.TrimSpace(c)
+		if strings.HasPrefix(c, oauthTokenName+"=") {
+			cookieJSON := c[len(oauthTokenName)+1:]
+			if len(cookieJSON) > 0 {
+				return store.ConvertToType([]byte(cookieJSON))
 			}
 		}
 	}
@@ -275,10 +322,14 @@ func (o *OIDCConnect) initProvider(ctx context.Context) (*oidc.Provider, error) 
 
 // oauth2Config factory method to oauth2Config.
 func (o *OIDCConnect) oauth2Config() *oauth2.Config {
+	o.providerMu.RLock()
+	endpoint := o.provider.Endpoint()
+	o.providerMu.RUnlock()
+
 	return &oauth2.Config{
 		ClientID:     o.OidcConfig.ClientID,
 		ClientSecret: o.OidcConfig.ClientSecret,
-		Endpoint:     o.provider.Endpoint(),
+		Endpoint:     endpoint,
 		Scopes:       o.OidcConfig.Scopes,
 		RedirectURL:  o.OidcConfig.RedirectURL + o.OidcConfig.RedirectPath,
 	}
