@@ -176,6 +176,31 @@ The recommended way to deploy `contour-auth-multi-tenant` is to use the Kustomiz
 [deployment YAML](./config/default). This will deploy services for `htpasswd` and `oidc` backends. For developer deployments,
 [Skaffold](https://skaffold.dev/) seems to work reasonably well.
 
+# Testing on OpenShift/OKD4
+
+For comprehensive end-to-end testing of `contour-auth-multi-tenant` on OpenShift OKD4, see the **[Testing Guide](./docs/testing-openshift-okd4.md)**.
+
+The testing guide includes:
+- Deploying a sample test application
+- Creating htpasswd secrets with proper labels
+- Configuring HTTPProxy with external authorization
+- Authentication flow tests (401/200 responses)
+- Hot reload tests (add/remove users without restart)
+- Error handling tests
+- Performance tests
+- Quick test script for rapid validation
+
+**Quick Start:**
+```bash
+# Set your configuration
+export APPS_DOMAIN="apps.okd4.example.com"
+export INSTANCE_NAME="private"
+export AUTH_NAMESPACE="snappcloud-ingress"
+export TEST_NAMESPACE="authserver-test"
+
+# See the full guide for all configuration options and test steps
+```
+
 # Releasing `contour-auth-multi-tenant`
 
 Maintainers who need to release a new version of `contour-auth-multi-tenant`
