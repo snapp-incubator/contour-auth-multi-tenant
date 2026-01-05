@@ -1,50 +1,85 @@
 project_name: contour-auth-multi-tenant
+
 before:
   hooks:
     - go mod download
     - go generate ./...
+
 builds:
-- env:
-  - CGO_ENABLED=0
-  goarch:
-  - amd64
-  - arm64
-  goos:
-  - linux
-  - darwin
-  ldflags:
-  - -s
-  - -w
-  - -X github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version.Progname={{ .ProjectName }}
-  - -X github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version.Version={{ .Env.VERSION }}
-  - -X github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version.Sha={{ .Env.SHA }}
-  - -X github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version.BuildDate={{ .Date }}
+  - env:
+      - CGO_ENABLED=0
+    goarch:
+      - amd64
+      - arm64
+    goos:
+      - linux
+      - darwin
+    ldflags:
+      - -s
+      - -w
+      - -X github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version.Progname={{ .ProjectName }}
+      - -X github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version.Version={{ .Env.VERSION }}
+      - -X github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version.Sha={{ .Env.SHA }}
+      - -X github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version.BuildDate={{ .Date }}
+
 checksum:
   name_template: 'checksums.txt'
+
 snapshot:
   name_template: "{{ .Tag }}-next"
+
 changelog:
   sort: asc
   filters:
     exclude:
-    - '^docs:'
-    - '^test:'
+      - '^docs:'
+      - '^test:'
+
 dockers:
-- goarch: amd64
-  goos: linux
-  dockerfile: hack/Dockerfile.release
-  skip_push: true
-  image_templates:
-    - "ghcr.io/projectcontour/{{ .ProjectName }}:{{ .Env.VERSION }}"
-    - "ghcr.io/projectcontour/{{ .ProjectName }}:latest"
-  build_flag_templates:
-  - "--pull"
-  - "--label=org.opencontainers.image.created={{.Date}}"
-  - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-  - "--label=org.opencontainers.image.version={{.Env.VERSION}}"
-  - "--label=org.opencontainers.image.url=https://projectcontour.io/"
-  - "--label=org.opencontainers.image.documentation=https://projectcontour.io/"
-  - "--label=org.opencontainers.image.vendor=Project Contour"
-  - "--label=org.opencontainers.image.licenses=Apache-2.0"
-  - "--label=org.opencontainers.image.title=Contour Authserver"
-  - "--label=org.opencontainers.image.description=Contour Authorization Server"
+  - goarch: amd64
+    goos: linux
+    dockerfile: hack/Dockerfile.release
+    skip_push: true
+    image_templates:
+      - "ghcr.io/snapp-incubator/{{ .ProjectName }}:{{ .Env.VERSION }}-amd64"
+      - "ghcr.io/snapp-incubator/{{ .ProjectName }}:latest-amd64"
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Env.VERSION}}"
+      - "--label=org.opencontainers.image.source=https://github.com/snapp-incubator/contour-auth-multi-tenant"
+      - "--label=org.opencontainers.image.vendor=Snapp Incubator"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--label=org.opencontainers.image.title=Contour Auth Multi-Tenant"
+      - "--label=org.opencontainers.image.description=Multi-tenant authentication server for Envoy/Contour"
+
+  - goarch: arm64
+    goos: linux
+    dockerfile: hack/Dockerfile.release
+    skip_push: true
+    image_templates:
+      - "ghcr.io/snapp-incubator/{{ .ProjectName }}:{{ .Env.VERSION }}-arm64"
+      - "ghcr.io/snapp-incubator/{{ .ProjectName }}:latest-arm64"
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Env.VERSION}}"
+      - "--label=org.opencontainers.image.source=https://github.com/snapp-incubator/contour-auth-multi-tenant"
+      - "--label=org.opencontainers.image.vendor=Snapp Incubator"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--label=org.opencontainers.image.title=Contour Auth Multi-Tenant"
+      - "--label=org.opencontainers.image.description=Multi-tenant authentication server for Envoy/Contour"
+
+docker_manifests:
+  - name_template: "ghcr.io/snapp-incubator/{{ .ProjectName }}:{{ .Env.VERSION }}"
+    image_templates:
+      - "ghcr.io/snapp-incubator/{{ .ProjectName }}:{{ .Env.VERSION }}-amd64"
+      - "ghcr.io/snapp-incubator/{{ .ProjectName }}:{{ .Env.VERSION }}-arm64"
+  - name_template: "ghcr.io/snapp-incubator/{{ .ProjectName }}:latest"
+    image_templates:
+      - "ghcr.io/snapp-incubator/{{ .ProjectName }}:latest-amd64"
+      - "ghcr.io/snapp-incubator/{{ .ProjectName }}:latest-arm64"

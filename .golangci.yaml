@@ -1,39 +1,62 @@
-run:
-  timeout: 10m
-
+version: "2"
 linters:
   enable:
-  - bodyclose
-  - gocognit
-  - goconst
-  - gocyclo
-  - godot
-  - gofmt
-  - goimports
-  - golint
-  - goprintffuncname
-  - gosec
-  - govet
-  - lll
-  - misspell
-  - nakedret
-  - staticcheck
-  - unconvert
-  - unparam
-  - whitespace
-  - wsl
-
-linters-settings:
-  misspell:
-    locale: US
-  gofmt:
-    simplify: true
-  unparam:
-    check-exported: false
-  govet:
-    exclude:
-
-issues:
-  exclude:
-    - Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*printf?|os\.(Un)?Setenv). is not checked
-
+    - bodyclose
+    - gocognit
+    - goconst
+    - gocyclo
+    - godot
+    - goprintffuncname
+    - gosec
+    - lll
+    - misspell
+    - nakedret
+    - revive
+    - unconvert
+    - unparam
+    - whitespace
+  settings:
+    misspell:
+      locale: US
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: var-naming
+    unparam:
+      check-exported: false
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - path: (.+)\.go$
+        text: Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*printf?|os\.(Un)?Setenv). is not checked
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

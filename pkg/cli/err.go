@@ -19,23 +19,23 @@ import "fmt"
 type ExitCode int
 
 const (
-	// EX_FAIL is an exit code indicating an unspecified error.
-	EX_FAIL ExitCode = 1 //nolint:golint
+	// ExFail is an exit code indicating an unspecified error.
+	ExFail ExitCode = 1
 
-	// EX_USAGE is an exit code indicating invalid invocation syntax.
-	EX_USAGE ExitCode = 65 //nolint:golint
+	// ExUsage is an exit code indicating invalid invocation syntax.
+	ExUsage ExitCode = 65
 
-	// EX_NOINPUT is an exit code indicating missing input data.
-	EX_NOINPUT ExitCode = 66 //nolint:golint
+	// ExNoInput is an exit code indicating missing input data.
+	ExNoInput ExitCode = 66
 
-	// EX_DATAERR means the input data was incorrect in some
-	// way.  This should only be used for user's data and not
+	// ExDataErr means the input data was incorrect in some
+	// way. This should only be used for user's data and not
 	// system files.
-	EX_DATAERR ExitCode = 65 //nolint:golint
+	ExDataErr ExitCode = 65
 
-	// EX_CONFIG means that something was found in an unconfigured
+	// ExConfig means that something was found in an unconfigured
 	// or misconfigured state.
-	EX_CONFIG ExitCode = 78 //nolint:golint
+	ExConfig ExitCode = 78
 )
 
 // ExitError captures an ExitCode and its associated error message.

@@ -27,7 +27,7 @@ import (
 func mustString(s string, err error) string {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s\n", version.Progname, err)
-		os.Exit(int(EX_CONFIG))
+		os.Exit(int(ExConfig))
 	}
 
 	return s

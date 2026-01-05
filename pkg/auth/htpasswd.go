@@ -114,13 +114,14 @@ func (h *Htpasswd) Check(ctx context.Context, request *Request) (*Response, erro
 
 	// If there's no "Authorization" header, or the authentication
 	// failed, send an authenticate request.
+	unauthorizedHeader := make(http.Header)
+	unauthorizedHeader.Set("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s", charset="UTF-8"`, h.Realm))
+
 	return &Response{
 		Allow: false,
 		Response: http.Response{
 			StatusCode: http.StatusUnauthorized,
-			Header: http.Header{
-				"WWW-Authenticate": {fmt.Sprintf(`Basic realm="%s", charset="UTF-8"`, h.Realm)},
-			},
+			Header:     unauthorizedHeader,
 		},
 	}, nil
 }
@@ -188,9 +189,16 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 		if err != nil {
 			h.Log.Error(err, "skipping malformed Secret",
 				"name", s.Name, "namespace", s.Namespace)
+			continue
 		}
 
 		if hasBadLine {
+			continue
+		}
+
+		if passwd == nil {
+			h.Log.Info("skipping Secret with empty credentials",
+				"name", s.Name, "namespace", s.Namespace)
 			continue
 		}
 

@@ -52,6 +52,6 @@ func main() {
 			os.Exit(int(exit.Code))
 		}
 
-		os.Exit(int(cli.EX_FAIL))
+		os.Exit(int(cli.ExFail))
 	}
 }

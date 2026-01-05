@@ -17,8 +17,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
+
+// ErrInvalidState is returned when state data cannot be unmarshalled.
+var ErrInvalidState = errors.New("invalid state data")
 
 // OIDCState defines the values kept in state.
 type OIDCState struct {
@@ -33,59 +37,74 @@ type OIDCState struct {
 	Scheme      string `json:"scheme"`
 }
 
-// Iota token.
+// Status constants for OIDCState.
 const (
 	StatusNeedToken = iota
 	StatusTokenReady
 )
 
-// NewState  create new state to store token for OIDC.
+// NewState creates a new state to store token for OIDC.
 func NewState() *OIDCState {
-	state := &OIDCState{
+	return &OIDCState{
 		Status: StatusNeedToken,
 	}
-
-	return state
 }
 
-// ConvertToByte  Convert State to Byte.
+// ConvertToByte converts State to byte slice.
 func ConvertToByte(s *OIDCState) []byte {
-	b, _ := json.Marshal(s)
+	if s == nil {
+		return nil
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return nil
+	}
 	return b
 }
 
-// ConvertToType Convert Byte to State.
-func ConvertToType(value []byte) *OIDCState {
-	state := &OIDCState{}
-	if err := json.Unmarshal(value, &state); err != nil {
-		fmt.Println(fmt.Errorf("could not unmarshal %v: ", err))
+// ConvertToType converts byte slice to State.
+// Returns nil and error if unmarshalling fails.
+func ConvertToType(value []byte) (*OIDCState, error) {
+	if len(value) == 0 {
+		return nil, ErrInvalidState
 	}
 
-	return state
+	state := &OIDCState{}
+	if err := json.Unmarshal(value, state); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidState, err)
+	}
+
+	return state, nil
 }
 
-// IsNewToken check if current state is new and token from idp is needed.
+// IsNewToken checks if current state is new and token from IDP is needed.
 func (s *OIDCState) IsNewToken() bool {
 	return s.Status == StatusNeedToken
 }
 
-// IsTokenReady check if token is ready.
+// IsTokenReady checks if token is ready.
 func (s *OIDCState) IsTokenReady() bool {
 	return s.Status == StatusTokenReady
 }
 
-// GenerateOauthState generates a new Oauth State from random bytes. The state define a unique request
-// from a particular user and used to identity user during callback or subsequent calls.
-func (s *OIDCState) GenerateOauthState() string {
+// GenerateOauthState generates a new OAuth State from random bytes.
+// The state defines a unique request from a particular user and is used
+// to identify the user during callback or subsequent calls.
+func (s *OIDCState) GenerateOauthState() (string, error) {
 	b := make([]byte, 32)
 
-	_, err := rand.Read(b)
-	if err != nil {
-		fmt.Println(fmt.Errorf("error reading random bytes generating OauthState: %v", err))
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("error generating oauth state: %w", err)
 	}
 
-	newState := base64.URLEncoding.EncodeToString(b)
-	s.OAuthState = newState
+	s.OAuthState = base64.URLEncoding.EncodeToString(b)
+	return s.OAuthState, nil
+}
 
-	return newState
+// Validate checks if the state has required fields populated.
+func (s *OIDCState) Validate() error {
+	if s.OAuthState == "" {
+		return errors.New("oauth state is empty")
+	}
+	return nil
 }
