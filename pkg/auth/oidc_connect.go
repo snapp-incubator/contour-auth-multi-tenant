@@ -43,8 +43,8 @@ type OIDCConnect struct {
 	Cache      *bigcache.BigCache
 	HTTPClient *http.Client
 
-	providerMu sync.RWMutex
-	provider   *oidc.Provider
+	providerLock sync.RWMutex
+	provider     *oidc.Provider
 }
 
 // Implement interface.
@@ -105,15 +105,15 @@ func (o *OIDCConnect) Check(ctx context.Context, req *Request) (*Response, error
 
 // ensureProvider initializes the OIDC provider if not already done (thread-safe).
 func (o *OIDCConnect) ensureProvider(ctx context.Context) error {
-	o.providerMu.RLock()
+	o.providerLock.RLock()
 	if o.provider != nil {
-		o.providerMu.RUnlock()
+		o.providerLock.RUnlock()
 		return nil
 	}
-	o.providerMu.RUnlock()
+	o.providerLock.RUnlock()
 
-	o.providerMu.Lock()
-	defer o.providerMu.Unlock()
+	o.providerLock.Lock()
+	defer o.providerLock.Unlock()
 
 	// Double-check after acquiring write lock
 	if o.provider != nil {
@@ -322,9 +322,9 @@ func (o *OIDCConnect) initProvider(ctx context.Context) (*oidc.Provider, error) 
 
 // oauth2Config factory method to oauth2Config.
 func (o *OIDCConnect) oauth2Config() *oauth2.Config {
-	o.providerMu.RLock()
+	o.providerLock.RLock()
 	endpoint := o.provider.Endpoint()
-	o.providerMu.RUnlock()
+	o.providerLock.RUnlock()
 
 	return &oauth2.Config{
 		ClientID:     o.OidcConfig.ClientID,
