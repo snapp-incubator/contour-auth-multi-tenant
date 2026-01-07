@@ -14,33 +14,29 @@
 package auth
 
 import (
-	"context"
-	"net"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 func TestHealthChecker_InitialState(t *testing.T) {
-	h := NewHealthChecker("test-service")
+	h := NewHealthChecker()
 
 	assert.False(t, h.IsReady(), "HealthChecker should start as not ready")
 }
 
 func TestHealthChecker_SetReady(t *testing.T) {
-	h := NewHealthChecker("test-service")
+	h := NewHealthChecker()
 
 	h.SetReady()
 	assert.True(t, h.IsReady(), "HealthChecker should be ready after SetReady()")
 }
 
 func TestHealthChecker_SetNotReady(t *testing.T) {
-	h := NewHealthChecker("test-service")
+	h := NewHealthChecker()
 
 	h.SetReady()
 	assert.True(t, h.IsReady())
@@ -49,72 +45,61 @@ func TestHealthChecker_SetNotReady(t *testing.T) {
 	assert.False(t, h.IsReady(), "HealthChecker should not be ready after SetNotReady()")
 }
 
-func TestHealthChecker_GRPCHealthCheck(t *testing.T) {
-	serviceName := "test-grpc-service"
-	h := NewHealthChecker(serviceName)
+func TestHealthChecker_HTTPHandler_Liveness(t *testing.T) {
+	h := NewHealthChecker()
+	handler := h.HTTPHandler()
 
-	// Create a gRPC server and register health checker
-	srv := grpc.NewServer()
-	h.Register(srv)
+	// Liveness should always return OK (even when not ready)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
 
-	// Start listening on a random port
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	handler.ServeHTTP(rec, req)
 
-	go func() {
-		_ = srv.Serve(listener)
-	}()
-	defer srv.GracefulStop()
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body, _ := io.ReadAll(rec.Body)
+	assert.Equal(t, "ok", string(body))
 
-	// Give the server time to start
-	time.Sleep(50 * time.Millisecond)
-
-	// Create a gRPC client
-	conn, err := grpc.NewClient(
-		listener.Addr().String(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	healthClient := grpc_health_v1.NewHealthClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Check initial state - should be NOT_SERVING
-	resp, err := healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{
-		Service: serviceName,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING, resp.Status,
-		"Initial health check should return NOT_SERVING")
-
-	// Set ready
+	// Still OK after SetReady
 	h.SetReady()
-
-	// Check again - should now be SERVING
-	resp, err = healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{
-		Service: serviceName,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, grpc_health_v1.HealthCheckResponse_SERVING, resp.Status,
-		"Health check after SetReady should return SERVING")
-
-	// Set not ready
-	h.SetNotReady()
-
-	// Check again - should be NOT_SERVING
-	resp, err = healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{
-		Service: serviceName,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, grpc_health_v1.HealthCheckResponse_NOT_SERVING, resp.Status,
-		"Health check after SetNotReady should return NOT_SERVING")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestHealthChecker_MultipleServices(t *testing.T) {
-	h1 := NewHealthChecker("service-1")
-	h2 := NewHealthChecker("service-2")
+func TestHealthChecker_HTTPHandler_Readiness(t *testing.T) {
+	h := NewHealthChecker()
+	handler := h.HTTPHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+
+	// Not ready initially
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	body, _ := io.ReadAll(rec.Body)
+	assert.Equal(t, "not ready", string(body))
+
+	// Ready after SetReady
+	h.SetReady()
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body, _ = io.ReadAll(rec.Body)
+	assert.Equal(t, "ok", string(body))
+
+	// Not ready after SetNotReady
+	h.SetNotReady()
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+func TestHealthChecker_MultipleInstances(t *testing.T) {
+	h1 := NewHealthChecker()
+	h2 := NewHealthChecker()
 
 	// Set h1 ready but not h2
 	h1.SetReady()
