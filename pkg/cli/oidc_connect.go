@@ -70,7 +70,14 @@ func NewOIDCConnect() *cobra.Command {
 				return ExitErrorf(ExConfig, "invalid TLS configuration: %s", err)
 			}
 
+			// Create and register health checker for Kubernetes probes
+			healthChecker := auth.NewHealthChecker("contour-auth-oidc")
+			healthChecker.Register(srv)
+
 			auth.RegisterServer(srv, authOidc)
+
+			// Mark as ready since OIDC config is successfully loaded
+			healthChecker.SetReady()
 
 			log.Info("started serving", "address", authOidc.OidcConfig.Address)
 			return auth.RunServer(ctx, listener, srv)

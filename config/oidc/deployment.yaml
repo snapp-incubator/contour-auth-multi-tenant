@@ -31,6 +31,22 @@ spec:
         - name: auth
           containerPort: 9443
           protocol: TCP
+        readinessProbe:
+          grpc:
+            port: 9443
+            service: contour-auth-oidc
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          grpc:
+            port: 9443
+            service: contour-auth-oidc
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
         volumeMounts:
         - name: tls
           mountPath: /tls

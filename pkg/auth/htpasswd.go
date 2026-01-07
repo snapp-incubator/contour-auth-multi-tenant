@@ -40,12 +40,13 @@ const (
 
 // Htpasswd watches Secrets for htpasswd files and uses them for HTTP Basic Authentication.
 type Htpasswd struct {
-	Log      logr.Logger
-	Realm    string
-	Client   client.Client
-	Creds    *Creds
-	Mu       *sync.Mutex
-	Selector labels.Selector
+	Log           logr.Logger
+	Realm         string
+	Client        client.Client
+	Creds         *Creds
+	Mu            *sync.Mutex
+	Selector      labels.Selector
+	HealthChecker *HealthChecker
 }
 
 type Creds struct {
@@ -208,6 +209,12 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 	h.Creds.Mu.Lock()
 	h.Creds.Map[req.Namespace] = newSecretPasswdMap
 	h.Creds.Mu.Unlock()
+
+	// Mark as ready after successful reconciliation
+	if h.HealthChecker != nil && !h.HealthChecker.IsReady() {
+		h.Log.Info("initial secret reconciliation complete, marking service as ready")
+		h.HealthChecker.SetReady()
+	}
 
 	return ctrl.Result{Requeue: false}, nil
 }

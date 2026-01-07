@@ -94,6 +94,13 @@ func NewHtpasswdCommand() *cobra.Command {
 				return ExitErrorf(ExConfig, "invalid TLS configuration: %s", err)
 			}
 
+			// Create and register health checker for Kubernetes probes
+			healthChecker := auth.NewHealthChecker("contour-auth-htpasswd")
+			healthChecker.Register(srv)
+
+			// Set the health checker on htpasswd so it can mark ready after first reconcile
+			htpasswd.HealthChecker = healthChecker
+
 			auth.RegisterServer(srv, htpasswd)
 
 			errChan := make(chan error, 2)

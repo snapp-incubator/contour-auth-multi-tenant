@@ -19,11 +19,14 @@ import (
 	"crypto/x509"
 	"net"
 	"os"
+	"sync/atomic"
 
 	envoy_service_auth_v2 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v2"
 	envoy_service_auth_v3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 type CheckRequestV2 = envoy_service_auth_v2.CheckRequest   //nolint:golint
@@ -69,6 +72,48 @@ func (a *authV3) Check(ctx context.Context, check *CheckRequestV3) (*CheckRespon
 	}
 
 	return response.AsV3(), nil
+}
+
+// HealthChecker manages gRPC health check status for Kubernetes probes.
+// It implements the standard gRPC health checking protocol.
+type HealthChecker struct {
+	server  *health.Server
+	ready   atomic.Bool
+	service string
+}
+
+// NewHealthChecker creates a new health checker for the given service name.
+func NewHealthChecker(serviceName string) *HealthChecker {
+	h := &HealthChecker{
+		server:  health.NewServer(),
+		service: serviceName,
+	}
+	// Start as NOT_SERVING until explicitly set ready
+	h.server.SetServingStatus(serviceName, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	return h
+}
+
+// SetReady marks the service as ready to receive traffic.
+// This should be called after initial setup is complete (e.g., secrets loaded).
+func (h *HealthChecker) SetReady() {
+	h.ready.Store(true)
+	h.server.SetServingStatus(h.service, grpc_health_v1.HealthCheckResponse_SERVING)
+}
+
+// SetNotReady marks the service as not ready.
+func (h *HealthChecker) SetNotReady() {
+	h.ready.Store(false)
+	h.server.SetServingStatus(h.service, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+}
+
+// IsReady returns true if the service is ready.
+func (h *HealthChecker) IsReady() bool {
+	return h.ready.Load()
+}
+
+// Register registers the health service with the gRPC server.
+func (h *HealthChecker) Register(srv *grpc.Server) {
+	grpc_health_v1.RegisterHealthServer(srv, h.server)
 }
 
 // RegisterServer registers the Checker with the external authorization
