@@ -18,7 +18,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"net/http"
 	"os"
+	"sync/atomic"
+	"time"
 
 	envoy_service_auth_v2 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v2"
 	envoy_service_auth_v3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
@@ -69,6 +72,85 @@ func (a *authV3) Check(ctx context.Context, check *CheckRequestV3) (*CheckRespon
 	}
 
 	return response.AsV3(), nil
+}
+
+// HealthChecker manages health check status for Kubernetes probes.
+// It provides HTTP endpoints for liveness and readiness checks.
+type HealthChecker struct {
+	ready atomic.Bool
+}
+
+// NewHealthChecker creates a new health checker.
+func NewHealthChecker() *HealthChecker {
+	h := &HealthChecker{}
+	h.SetReady()
+	return h
+}
+
+// SetReady marks the service as ready to receive traffic.
+// This should be called after initial setup is complete (e.g., secrets loaded).
+func (h *HealthChecker) SetReady() {
+	h.ready.Store(true)
+}
+
+// SetNotReady marks the service as not ready.
+func (h *HealthChecker) SetNotReady() {
+	h.ready.Store(false)
+}
+
+// IsReady returns true if the service is ready.
+func (h *HealthChecker) IsReady() bool {
+	return h.ready.Load()
+}
+
+// HTTPHandler returns an HTTP handler for health checks.
+// This provides a non-TLS endpoint for Kubernetes probes.
+func (h *HealthChecker) HTTPHandler() http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		// Liveness: always return OK if server is running
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		// Readiness: return OK only if service is ready
+		if h.IsReady() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("not ready"))
+		}
+	})
+
+	return mux
+}
+
+// RunHealthServer starts an HTTP health check server on the given address.
+// This runs in the background and stops when the context is canceled.
+func (h *HealthChecker) RunHealthServer(ctx context.Context, address string) error {
+	server := &http.Server{
+		Addr:              address,
+		Handler:           h.HTTPHandler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	errChan := make(chan error, 1)
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errChan <- err
+		}
+	}()
+
+	select {
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		return server.Shutdown(context.Background())
+	}
 }
 
 // RegisterServer registers the Checker with the external authorization

@@ -70,14 +70,57 @@ func NewOIDCConnect() *cobra.Command {
 				return ExitErrorf(ExConfig, "invalid TLS configuration: %s", err)
 			}
 
+			// Create health checker for Kubernetes probes
+			healthChecker := auth.NewHealthChecker()
+
 			auth.RegisterServer(srv, authOidc)
 
-			log.Info("started serving", "address", authOidc.OidcConfig.Address)
-			return auth.RunServer(ctx, listener, srv)
+			// Mark as ready since OIDC config is successfully loaded
+			healthChecker.SetReady()
+
+			errChan := make(chan error, 2)
+
+			// Start HTTP health server for Kubernetes probes
+			healthAddress := mustString(cmd.Flags().GetString("health-address"))
+			go func() {
+				log.Info("started health server", "address", healthAddress)
+
+				if err := healthChecker.RunHealthServer(ctx, healthAddress); err != nil {
+					errChan <- ExitErrorf(ExFail, "health server failed: %w", err)
+					return
+				}
+
+				errChan <- nil
+			}()
+
+			go func() {
+				log.Info("started serving", "address", authOidc.OidcConfig.Address)
+
+				if err := auth.RunServer(ctx, listener, srv); err != nil {
+					errChan <- ExitErrorf(ExFail, "authorization server failed: %w", err)
+					return
+				}
+
+				errChan <- nil
+			}()
+
+			// Wait for both goroutines or context cancellation
+			for i := 0; i < 2; i++ {
+				select {
+				case err := <-errChan:
+					if err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return nil
+				}
+			}
+			return nil
 		},
 	}
 
 	cmd.Flags().String("config", "", "Path to config file ( Yaml format ).")
+	cmd.Flags().String("health-address", ":8081", "The address the health check endpoint binds to.")
 	cmd.Flags().String("tls-cert-path", "", "Path to the TLS server certificate.")
 	cmd.Flags().String("tls-ca-path", "", "Path to the TLS CA certificate bundle.")
 	cmd.Flags().String("tls-key-path", "", "Path to the TLS server key.")

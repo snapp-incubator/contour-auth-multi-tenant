@@ -94,10 +94,29 @@ func NewHtpasswdCommand() *cobra.Command {
 				return ExitErrorf(ExConfig, "invalid TLS configuration: %s", err)
 			}
 
+			// Create health checker for Kubernetes probes
+			healthChecker := auth.NewHealthChecker()
+
+			// Set the health checker on htpasswd so it can mark ready after first reconcile
+			htpasswd.HealthChecker = healthChecker
+
 			auth.RegisterServer(srv, htpasswd)
 
-			errChan := make(chan error, 2)
+			errChan := make(chan error, 3)
 			ctx := ctrl.SetupSignalHandler()
+
+			// Start HTTP health server for Kubernetes probes
+			healthAddress := mustString(cmd.Flags().GetString("health-address"))
+			go func() {
+				log.Info("started health server", "address", healthAddress)
+
+				if err := healthChecker.RunHealthServer(ctx, healthAddress); err != nil {
+					errChan <- ExitErrorf(ExFail, "health server failed: %w", err)
+					return
+				}
+
+				errChan <- nil
+			}()
 
 			go func() {
 				log.Info("started authorization server",
@@ -123,8 +142,8 @@ func NewHtpasswdCommand() *cobra.Command {
 				errChan <- nil
 			}()
 
-			// Wait for both goroutines or context cancellation
-			for i := 0; i < 2; i++ {
+			// Wait for all goroutines or context cancellation
+			for i := 0; i < 3; i++ {
 				select {
 				case err := <-errChan:
 					if err != nil {
@@ -140,6 +159,7 @@ func NewHtpasswdCommand() *cobra.Command {
 
 	// Controller flags.
 	cmd.Flags().String("metrics-address", ":8080", "The address the metrics endpoint binds to.")
+	cmd.Flags().String("health-address", ":8081", "The address the health check endpoint binds to.")
 	cmd.Flags().StringSlice("watch-namespaces", []string{}, "The list of namespaces to watch for Secrets.")
 	cmd.Flags().String("selector", "", "Selector (label-query) to filter Secrets, supports '=', '==', and '!='.")
 
