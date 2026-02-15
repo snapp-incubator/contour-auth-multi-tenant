@@ -82,7 +82,9 @@ type HealthChecker struct {
 
 // NewHealthChecker creates a new health checker.
 func NewHealthChecker() *HealthChecker {
-	return &HealthChecker{}
+	h := &HealthChecker{}
+	h.SetReady()
+	return h
 }
 
 // SetReady marks the service as ready to receive traffic.
