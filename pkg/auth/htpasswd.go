@@ -44,7 +44,6 @@ type Htpasswd struct {
 	Realm         string
 	Client        client.Client
 	Creds         *Creds
-	Mu            *sync.Mutex
 	Selector      labels.Selector
 	HealthChecker *HealthChecker
 }
@@ -156,9 +155,6 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 	if h.Selector != nil {
 		opts = append(opts, client.MatchingLabelsSelector{Selector: h.Selector})
 	}
-
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
 
 	secrets := &v1.SecretList{}
 	if err := h.Client.List(ctx, secrets, opts...); err != nil {

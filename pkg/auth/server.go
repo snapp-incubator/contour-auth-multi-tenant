@@ -80,11 +80,9 @@ type HealthChecker struct {
 	ready atomic.Bool
 }
 
-// NewHealthChecker creates a new health checker.
+// NewHealthChecker creates a new health checker. Starts in not-ready state.
 func NewHealthChecker() *HealthChecker {
-	h := &HealthChecker{}
-	h.SetReady()
-	return h
+	return &HealthChecker{}
 }
 
 // SetReady marks the service as ready to receive traffic.
@@ -149,7 +147,10 @@ func (h *HealthChecker) RunHealthServer(ctx context.Context, address string) err
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		return server.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		return nil
 	}
 }
 
