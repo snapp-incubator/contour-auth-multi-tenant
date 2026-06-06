@@ -57,7 +57,6 @@ func newTestHtpasswd(t *testing.T, secrets ...v1.Secret) *Htpasswd {
 		Realm:    "default",
 		Creds:    creds,
 		Client:   client,
-		Mu:       &sync.Mutex{},
 		Selector: selector,
 	}
 }
@@ -429,7 +428,6 @@ func TestHtpasswd_RealmMatching(t *testing.T) {
 			Map: make(map[string]map[string]*htpasswd.File),
 			Mu:  &sync.RWMutex{},
 		},
-		Mu:       &sync.Mutex{},
 		Selector: selector,
 	}
 
