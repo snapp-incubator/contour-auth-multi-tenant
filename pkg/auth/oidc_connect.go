@@ -89,10 +89,7 @@ func (o *OIDCConnect) Check(ctx context.Context, req *Request) (*Response, error
 	}
 
 	// Validate the state.
-	resp, valid, err := o.isValidState(ctx, req, u)
-	if err != nil {
-		return &resp, err
-	}
+	resp, valid := o.isValidState(ctx, req, u)
 
 	// If state is invalid, redirect to login handler.
 	if !valid {
@@ -129,7 +126,7 @@ func (o *OIDCConnect) ensureProvider(ctx context.Context) error {
 }
 
 // isValidState checks the user token and state validity for subsequent calls.
-func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, u *url.URL) (Response, bool, error) {
+func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, u *url.URL) (Response, bool) {
 	// Do we have stateid stored in querystring
 	var state *store.OIDCState
 
@@ -163,12 +160,12 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, u *url.URL
 				o.Log.Error(err, "error deleting state")
 			}
 
-			return resp, true, nil
+			return resp, true
 		}
 	}
 
 	// return empty response, will direct to loginHandler
-	return Response{}, false, nil
+	return Response{}, false
 }
 
 // loginHandler takes a url returning a Response with a new state that is required by oauth during initial user login.
