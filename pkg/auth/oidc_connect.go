@@ -146,12 +146,9 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, u *url.URL
 
 	// State exists, proceed with token validation.
 	if state != nil {
-		// Re-initialize provider to refresh the context, this seems like bugs with coreos go-oidc module.
-		provider, err := o.initProvider(ctx)
-		if err != nil {
-			o.Log.Error(err, "fail to initialize provider")
-			return createResponse(http.StatusInternalServerError), false, err
-		}
+		o.providerLock.RLock()
+		provider := o.provider
+		o.providerLock.RUnlock()
 
 		if o.isValidStateToken(ctx, state, provider) {
 			stateJSON, _ := json.Marshal(state)

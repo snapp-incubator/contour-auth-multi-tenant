@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"context"
 	"net"
 	"sync"
 
@@ -102,8 +103,10 @@ func NewHtpasswdCommand() *cobra.Command {
 
 			auth.RegisterServer(srv, htpasswd)
 
+			ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+			defer cancel()
+
 			errChan := make(chan error, 3)
-			ctx := ctrl.SetupSignalHandler()
 
 			// Start HTTP health server for Kubernetes probes
 			healthAddress := mustString(cmd.Flags().GetString("health-address"))
@@ -142,18 +145,22 @@ func NewHtpasswdCommand() *cobra.Command {
 				errChan <- nil
 			}()
 
-			// Wait for all goroutines or context cancellation
+			// Mark ready after cache syncs. Handles clusters with no matching secrets
+			// where Reconcile is never triggered (no events = no reconcile calls).
+			go func() {
+				if mgr.GetCache().WaitForCacheSync(ctx) {
+					healthChecker.SetReady()
+				}
+			}()
+
+			var firstErr error
 			for i := 0; i < 3; i++ {
-				select {
-				case err := <-errChan:
-					if err != nil {
-						return err
-					}
-				case <-ctx.Done():
-					return nil
+				if err := <-errChan; err != nil && firstErr == nil {
+					firstErr = err
+					cancel()
 				}
 			}
-			return nil
+			return firstErr
 		},
 	}
 
