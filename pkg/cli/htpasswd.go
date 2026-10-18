@@ -159,6 +159,8 @@ func NewHtpasswdCommand() *cobra.Command {
 			for i := 0; i < 3; i++ {
 				if err := <-errChan; err != nil && firstErr == nil {
 					firstErr = err
+					healthChecker.SetNotLive()
+					healthChecker.SetNotReady()
 					cancel()
 				}
 			}

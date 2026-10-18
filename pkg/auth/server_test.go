@@ -64,6 +64,14 @@ func TestHealthChecker_HTTPHandler_Liveness(t *testing.T) {
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// Unhealthy after SetNotLive
+	h.SetNotLive()
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	body, _ = io.ReadAll(rec.Body)
+	assert.Equal(t, "unhealthy", string(body))
 }
 
 func TestHealthChecker_HTTPHandler_Readiness(t *testing.T) {

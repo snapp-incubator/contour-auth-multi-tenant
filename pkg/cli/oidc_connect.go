@@ -110,6 +110,8 @@ func NewOIDCConnect() *cobra.Command {
 			for i := 0; i < 2; i++ {
 				if err := <-errChan; err != nil && firstErr == nil {
 					firstErr = err
+					healthChecker.SetNotLive()
+					healthChecker.SetNotReady()
 					cancel()
 				}
 			}
