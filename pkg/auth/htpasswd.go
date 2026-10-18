@@ -121,13 +121,15 @@ func (h *Htpasswd) fetchAndCacheSecret(ctx context.Context, namespace, name stri
 	passwd, err := htpasswd.NewFromReader(
 		bytes.NewBuffer(authData),
 		htpasswd.DefaultSystems,
-		htpasswd.BadLineHandler(func(err error) {
+		htpasswd.BadLineHandler(func(_ error) {
 			hasBadLine = true
-			h.Log.Error(err, "skipping malformed Secret",
+			h.Log.Info("skipping Secret with malformed htpasswd line syntax",
 				"name", secret.Name, "namespace", secret.Namespace)
 		}),
 	)
 	if err != nil {
+		h.Log.Info("skipping Secret due to htpasswd scan error",
+			"name", secret.Name, "namespace", secret.Namespace)
 		return nil, err
 	}
 	if hasBadLine || passwd == nil {
@@ -249,14 +251,14 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 		passwd, err := htpasswd.NewFromReader(
 			bytes.NewBuffer(authData),
 			htpasswd.DefaultSystems,
-			htpasswd.BadLineHandler(func(err error) {
+			htpasswd.BadLineHandler(func(_ error) {
 				hasBadLine = true
-				h.Log.Error(err, "skipping malformed Secret",
+				h.Log.Info("skipping Secret with malformed htpasswd line syntax",
 					"name", s.Name, "namespace", s.Namespace)
 			}),
 		)
 		if err != nil {
-			h.Log.Error(err, "skipping malformed Secret",
+			h.Log.Info("skipping Secret due to htpasswd scan error",
 				"name", s.Name, "namespace", s.Namespace)
 			continue
 		}
