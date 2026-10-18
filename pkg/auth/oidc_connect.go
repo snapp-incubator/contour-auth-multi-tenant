@@ -135,8 +135,10 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, u *url.URL
 
 	stateToken := u.Query().Get(stateQueryParamName)
 
-	if stateByte, err := o.Cache.Get(stateToken); err == nil {
-		state, _ = store.ConvertToType(stateByte)
+	if stateToken != "" {
+		if stateByte, err := o.Cache.Get(stateToken); err == nil {
+			state, _ = store.ConvertToType(stateByte)
+		}
 	}
 
 	// State not found, try to retrieve from cookies.
@@ -146,12 +148,9 @@ func (o *OIDCConnect) isValidState(ctx context.Context, req *Request, u *url.URL
 
 	// State exists, proceed with token validation.
 	if state != nil {
-		// Re-initialize provider to refresh the context, this seems like bugs with coreos go-oidc module.
-		provider, err := o.initProvider(ctx)
-		if err != nil {
-			o.Log.Error(err, "fail to initialize provider")
-			return createResponse(http.StatusInternalServerError), false, err
-		}
+		o.providerLock.RLock()
+		provider := o.provider
+		o.providerLock.RUnlock()
 
 		if o.isValidStateToken(ctx, state, provider) {
 			stateJSON, _ := json.Marshal(state)
@@ -218,9 +217,9 @@ func (o *OIDCConnect) callbackHandler(ctx context.Context, u *url.URL) (Response
 	}
 
 	// Retrieve token. and check token validity
-	context := oidc.ClientContext(ctx, o.HTTPClient)
+	oidcCtx := oidc.ClientContext(ctx, o.HTTPClient)
 
-	token, err := o.oauth2Config().Exchange(context, code)
+	token, err := o.oauth2Config().Exchange(oidcCtx, code)
 	if err != nil {
 		// 2.3.1 Token invalid, return Internal Server Error
 		o.Log.Error(err, "Token exchange error")

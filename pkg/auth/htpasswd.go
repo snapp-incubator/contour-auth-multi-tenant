@@ -56,6 +56,13 @@ type Creds struct {
 
 // Match authenticates the credential against the htpasswd file.
 func (h *Htpasswd) Match(user, pass, secretRef string) bool {
+	return h.MatchContext(context.Background(), user, pass, secretRef)
+}
+
+// MatchContext authenticates the credential against the htpasswd file with context support.
+// If the secret is not found in the local cache, it attempts to fetch and cache it dynamically.
+func (h *Htpasswd) MatchContext(ctx context.Context, user, pass, secretRef string) bool {
+	secretRef = strings.TrimSpace(secretRef)
 	secretRefSlice := strings.Split(secretRef, "/")
 	if len(secretRefSlice) != 2 {
 		//nolint:lll
@@ -63,9 +70,24 @@ func (h *Htpasswd) Match(user, pass, secretRef string) bool {
 		return false
 	}
 
+	namespace := secretRefSlice[0]
+	secretName := secretRefSlice[1]
+
 	h.Creds.Mu.RLock()
-	passwd, found := h.Creds.Map[secretRefSlice[0]][secretRefSlice[1]]
+	var passwd *htpasswd.File
+	var found bool
+	if nsMap, ok := h.Creds.Map[namespace]; ok {
+		passwd, found = nsMap[secretName]
+	}
 	h.Creds.Mu.RUnlock()
+
+	if !found && h.Client != nil {
+		var err error
+		passwd, err = h.fetchAndCacheSecret(ctx, namespace, secretName)
+		if err == nil && passwd != nil {
+			found = true
+		}
+	}
 
 	if !found {
 		//nolint:lll
@@ -74,6 +96,53 @@ func (h *Htpasswd) Match(user, pass, secretRef string) bool {
 	}
 
 	return passwd.Match(user, pass)
+}
+
+func (h *Htpasswd) fetchAndCacheSecret(ctx context.Context, namespace, name string) (*htpasswd.File, error) {
+	if h.Client == nil {
+		return nil, fmt.Errorf("k8s client is nil")
+	}
+
+	secret := &v1.Secret{}
+	if err := h.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, secret); err != nil {
+		return nil, err
+	}
+
+	if h.Selector != nil && !h.Selector.Matches(labels.Set(secret.GetLabels())) {
+		return nil, fmt.Errorf("secret does not match selector")
+	}
+
+	isVerified, authData := h.verifyFetchSecretData(secret)
+	if !isVerified {
+		return nil, fmt.Errorf("secret verification failed")
+	}
+
+	hasBadLine := false
+	passwd, err := htpasswd.NewFromReader(
+		bytes.NewBuffer(authData),
+		htpasswd.DefaultSystems,
+		htpasswd.BadLineHandler(func(err error) {
+			hasBadLine = true
+			h.Log.Error(err, "skipping malformed Secret",
+				"name", secret.Name, "namespace", secret.Namespace)
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if hasBadLine || passwd == nil {
+		return nil, fmt.Errorf("malformed or empty htpasswd data")
+	}
+
+	h.Creds.Mu.Lock()
+	if h.Creds.Map[namespace] == nil {
+		h.Creds.Map[namespace] = make(map[string]*htpasswd.File)
+	}
+	h.Creds.Map[namespace][name] = passwd
+	h.Creds.Mu.Unlock()
+
+	h.Log.Info("dynamically loaded secret", "namespace", namespace, "name", name)
+	return passwd, nil
 }
 
 // Check manages the HTTP basic authentication flow and return a response based on the authentication result.
@@ -89,7 +158,7 @@ func (h *Htpasswd) Check(ctx context.Context, request *Request) (*Response, erro
 	// If there's an "Authorization" header and we can verify
 	// it, succeed and inject some headers to tell the origin
 	// what we did.
-	if ok && found && h.Match(user, pass, secretRef) {
+	if ok && found && h.MatchContext(ctx, user, pass, secretRef) {
 		authorized := http.Response{
 			StatusCode: http.StatusOK,
 			Header: http.Header{
@@ -151,14 +220,13 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 	var opts []client.ListOption
 
 	// restricts the list operation to the given namespace
-	opts = append(opts, client.InNamespace(req.Namespace))
+	if req.Namespace != "" {
+		opts = append(opts, client.InNamespace(req.Namespace))
+	}
 
 	if h.Selector != nil {
 		opts = append(opts, client.MatchingLabelsSelector{Selector: h.Selector})
 	}
-
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
 
 	secrets := &v1.SecretList{}
 	if err := h.Client.List(ctx, secrets, opts...); err != nil {
@@ -207,7 +275,18 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 	}
 
 	h.Creds.Mu.Lock()
-	h.Creds.Map[req.Namespace] = newSecretPasswdMap
+	if req.Namespace != "" {
+		h.Creds.Map[req.Namespace] = newSecretPasswdMap
+	} else {
+		for _, s := range secrets.Items {
+			if passwd, ok := newSecretPasswdMap[s.Name]; ok {
+				if h.Creds.Map[s.Namespace] == nil {
+					h.Creds.Map[s.Namespace] = make(map[string]*htpasswd.File)
+				}
+				h.Creds.Map[s.Namespace][s.Name] = passwd
+			}
+		}
+	}
 	h.Creds.Mu.Unlock()
 
 	// Mark as ready after successful reconciliation

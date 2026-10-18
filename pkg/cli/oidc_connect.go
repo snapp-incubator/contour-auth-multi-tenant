@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"time"
@@ -33,7 +34,8 @@ func NewOIDCConnect() *cobra.Command {
 		Short: "Run a OIDC authentication server",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx := ctrl.SetupSignalHandler()
+			ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+			defer cancel()
 			log := ctrl.Log.WithName("auth.oidc")
 
 			cfgFile, err := cmd.Flags().GetString("config")
@@ -57,7 +59,7 @@ func NewOIDCConnect() *cobra.Command {
 				Log:        log,
 				OidcConfig: cfg,
 				Cache:      bigCache,
-				HTTPClient: http.DefaultClient, // need to handle client creation with TLS
+				HTTPClient: &http.Client{Timeout: 30 * time.Second},
 			}
 
 			listener, err := net.Listen("tcp", authOidc.OidcConfig.Address)
@@ -104,18 +106,14 @@ func NewOIDCConnect() *cobra.Command {
 				errChan <- nil
 			}()
 
-			// Wait for both goroutines or context cancellation
+			var firstErr error
 			for i := 0; i < 2; i++ {
-				select {
-				case err := <-errChan:
-					if err != nil {
-						return err
-					}
-				case <-ctx.Done():
-					return nil
+				if err := <-errChan; err != nil && firstErr == nil {
+					firstErr = err
+					cancel()
 				}
 			}
-			return nil
+			return firstErr
 		},
 	}
 

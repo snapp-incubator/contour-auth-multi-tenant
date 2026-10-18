@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"context"
 	"net"
 	"sync"
 
@@ -25,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrl_cache "sigs.k8s.io/controller-runtime/pkg/cache"
 	ctrl_metrics_server "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
@@ -47,23 +49,24 @@ func NewHtpasswdCommand() *cobra.Command {
 				},
 			}
 
-			// if namespaces, err := cmd.Flags().GetStringSlice("watch-namespaces"); err == nil && len(namespaces) > 0 {
-			// 	// Maps namespaces to cache configs. We will set an empty config
-			// 	// so the higher level defaults are used.
-			// 	options.Cache.DefaultNamespaces = make(map[string]ctrl_cache.Config)
-			// 	for _, ns := range namespaces {
-			// 		options.Cache.DefaultNamespaces[ns] = ctrl_cache.Config{}
-			// 	}
-			// }
-
-			mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
-			if err != nil {
-				return ExitErrorf(ExConfig, "failed to create controller manager: %s", err)
+			if namespaces, err := cmd.Flags().GetStringSlice("watch-namespaces"); err == nil && len(namespaces) > 0 {
+				options.Cache.DefaultNamespaces = make(map[string]ctrl_cache.Config)
+				for _, ns := range namespaces {
+					options.Cache.DefaultNamespaces[ns] = ctrl_cache.Config{}
+				}
 			}
 
 			secretsSelector, err := labels.Parse(mustString(cmd.Flags().GetString("selector")))
 			if err != nil {
 				return ExitErrorf(ExConfig, "failed to parse secrets selector: %s", err)
+			}
+			if !secretsSelector.Empty() {
+				options.Cache.DefaultLabelSelector = secretsSelector
+			}
+
+			mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
+			if err != nil {
+				return ExitErrorf(ExConfig, "failed to create controller manager: %s", err)
 			}
 
 			creds := &auth.Creds{
@@ -102,8 +105,18 @@ func NewHtpasswdCommand() *cobra.Command {
 
 			auth.RegisterServer(srv, htpasswd)
 
+			ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+			defer cancel()
+
+			// Mark ready after cache syncs. Handles clusters with no matching secrets
+			// where Reconcile is never triggered (no events = no reconcile calls).
+			go func() {
+				if mgr.GetCache().WaitForCacheSync(ctx) {
+					healthChecker.SetReady()
+				}
+			}()
+
 			errChan := make(chan error, 3)
-			ctx := ctrl.SetupSignalHandler()
 
 			// Start HTTP health server for Kubernetes probes
 			healthAddress := mustString(cmd.Flags().GetString("health-address"))
@@ -142,18 +155,14 @@ func NewHtpasswdCommand() *cobra.Command {
 				errChan <- nil
 			}()
 
-			// Wait for all goroutines or context cancellation
+			var firstErr error
 			for i := 0; i < 3; i++ {
-				select {
-				case err := <-errChan:
-					if err != nil {
-						return err
-					}
-				case <-ctx.Done():
-					return nil
+				if err := <-errChan; err != nil && firstErr == nil {
+					firstErr = err
+					cancel()
 				}
 			}
-			return nil
+			return firstErr
 		},
 	}
 

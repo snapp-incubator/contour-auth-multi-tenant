@@ -16,12 +16,14 @@ package cli
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/snapp-incubator/contour-auth-multi-tenant/pkg/auth"
 	"github.com/snapp-incubator/contour-auth-multi-tenant/pkg/version"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 func mustString(s string, err error) string {
@@ -56,6 +58,17 @@ func Defaults(c *cobra.Command) *cobra.Command {
 func DefaultServer(cmd *cobra.Command) (*grpc.Server, error) {
 	opts := []grpc.ServerOption{
 		grpc.MaxConcurrentStreams(1 << 20),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle:     15 * time.Minute,
+			MaxConnectionAge:      30 * time.Minute,
+			MaxConnectionAgeGrace: 5 * time.Minute,
+			Time:                  1 * time.Minute,
+			Timeout:               5 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	}
 
 	if anyString(
