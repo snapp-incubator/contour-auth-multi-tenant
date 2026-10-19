@@ -506,3 +506,59 @@ func TestHtpasswd_Match_DynamicSecretLookup(t *testing.T) {
 	result = auth.Match("dynamicuser", "example1", "test-ns/nonexistent")
 	assert.False(t, result)
 }
+
+func TestHtpasswd_SecretUpdatedToMalformed(t *testing.T) {
+	secret := &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-secret",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"auth.contour.snappcloud.io/type": "basic"},
+			Annotations: map[string]string{
+				AnnotationAuthRealm: "*",
+			},
+		},
+		Type: v1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"auth": []byte("validuser:$apr1$WBCC5B.w$fUu8qiKG/rLdMs3OTy9gc0"),
+		},
+	}
+
+	client := fake.NewClientBuilder().WithRuntimeObjects(secret).Build()
+	selector, _ := labels.Parse("auth.contour.snappcloud.io/type=basic")
+
+	auth := &Htpasswd{
+		Log:    logr.New(log.NullLogSink{}),
+		Realm:  "default",
+		Client: client,
+		Creds: &Creds{
+			Map: make(map[string]map[string]*htpasswd.File),
+			Mu:  &sync.RWMutex{},
+		},
+		Mu:       &sync.Mutex{},
+		Selector: selector,
+	}
+
+	// 1. Initial reconcile loads valid secret
+	_, err := auth.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "test-ns", Name: "test-secret"},
+	})
+	require.NoError(t, err)
+
+	// User can authenticate with valid credentials
+	assert.True(t, auth.Match("validuser", "example1", "test-ns/test-secret"))
+
+	// 2. Secret is updated to malformed data in K8s
+	secret.Data["auth"] = []byte("malformed-data-without-colon")
+	err = client.Update(context.Background(), secret)
+	require.NoError(t, err)
+
+	// Reconcile triggered by K8s update event
+	_, err = auth.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "test-ns", Name: "test-secret"},
+	})
+	require.NoError(t, err)
+
+	// 3. What happens when the user tries to authenticate?
+	result := auth.Match("validuser", "example1", "test-ns/test-secret")
+	assert.False(t, result, "User should NOT be able to authenticate after secret is malformed")
+}
