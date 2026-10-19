@@ -78,12 +78,13 @@ func (a *authV3) Check(ctx context.Context, check *CheckRequestV3) (*CheckRespon
 // It provides HTTP endpoints for liveness and readiness checks.
 type HealthChecker struct {
 	ready atomic.Bool
+	live  atomic.Bool
 }
 
-// NewHealthChecker creates a new health checker.
+// NewHealthChecker creates a new health checker. Starts in not-ready state and live state.
 func NewHealthChecker() *HealthChecker {
 	h := &HealthChecker{}
-	h.SetReady()
+	h.live.Store(true)
 	return h
 }
 
@@ -103,15 +104,35 @@ func (h *HealthChecker) IsReady() bool {
 	return h.ready.Load()
 }
 
+// SetLive marks the service as alive.
+func (h *HealthChecker) SetLive() {
+	h.live.Store(true)
+}
+
+// SetNotLive marks the service as unalive, causing liveness probe to fail.
+func (h *HealthChecker) SetNotLive() {
+	h.live.Store(false)
+}
+
+// IsLive returns true if the service is alive.
+func (h *HealthChecker) IsLive() bool {
+	return h.live.Load()
+}
+
 // HTTPHandler returns an HTTP handler for health checks.
 // This provides a non-TLS endpoint for Kubernetes probes.
 func (h *HealthChecker) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		// Liveness: always return OK if server is running
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		// Liveness: return OK if server is alive and healthy
+		if h.IsLive() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("unhealthy"))
+		}
 	})
 
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +170,10 @@ func (h *HealthChecker) RunHealthServer(ctx context.Context, address string) err
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		return server.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		return nil
 	}
 }
 
