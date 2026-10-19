@@ -70,21 +70,15 @@ func (h *Htpasswd) MatchContext(ctx context.Context, user, pass, secretRef strin
 		return false
 	}
 
-	namespace := secretRefSlice[0]
-	secretName := secretRefSlice[1]
+	namespace, secretName := secretRefSlice[0], secretRefSlice[1]
 
-	h.Creds.Mu.RLock()
-	var passwd *htpasswd.File
-	var found bool
-	if nsMap, ok := h.Creds.Map[namespace]; ok {
-		passwd, found = nsMap[secretName]
-	}
-	h.Creds.Mu.RUnlock()
-
+	passwd, found := h.lookup(namespace, secretName)
 	if !found && h.Client != nil {
 		var err error
-		passwd, err = h.fetchAndCacheSecret(ctx, namespace, secretName)
-		if err == nil && passwd != nil {
+		if passwd, err = h.fetchAndCacheSecret(ctx, namespace, secretName); err != nil {
+			h.Log.V(1).Info("on-demand Secret lookup failed",
+				"namespace", namespace, "name", secretName, "reason", err.Error())
+		} else {
 			found = true
 		}
 	}
@@ -98,9 +92,25 @@ func (h *Htpasswd) MatchContext(ctx context.Context, user, pass, secretRef strin
 	return passwd.Match(user, pass)
 }
 
+// lookup returns the cached htpasswd file for the given Secret.
+func (h *Htpasswd) lookup(namespace, name string) (*htpasswd.File, bool) {
+	h.Creds.Mu.RLock()
+	defer h.Creds.Mu.RUnlock()
+
+	passwd, found := h.Creds.Map[namespace][name]
+	return passwd, found
+}
+
+// fetchAndCacheSecret loads a single Secret from the informer cache and stores it in Creds.
+// It holds h.Mu so it cannot interleave with Reconcile: otherwise a copy fetched here could be
+// written back after Reconcile dropped a deleted or rotated Secret, keeping revoked credentials valid.
 func (h *Htpasswd) fetchAndCacheSecret(ctx context.Context, namespace, name string) (*htpasswd.File, error) {
-	if h.Client == nil {
-		return nil, fmt.Errorf("k8s client is nil")
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+
+	// Another request or Reconcile may have loaded it while we waited for the lock.
+	if passwd, found := h.lookup(namespace, name); found {
+		return passwd, nil
 	}
 
 	secret := &v1.Secret{}
@@ -112,28 +122,9 @@ func (h *Htpasswd) fetchAndCacheSecret(ctx context.Context, namespace, name stri
 		return nil, fmt.Errorf("secret does not match selector")
 	}
 
-	isVerified, authData := h.verifyFetchSecretData(secret)
-	if !isVerified {
-		return nil, fmt.Errorf("secret verification failed")
-	}
-
-	hasBadLine := false
-	passwd, err := htpasswd.NewFromReader(
-		bytes.NewBuffer(authData),
-		htpasswd.DefaultSystems,
-		htpasswd.BadLineHandler(func(_ error) {
-			hasBadLine = true
-			h.Log.Info("skipping Secret with malformed htpasswd line syntax",
-				"name", secret.Name, "namespace", secret.Namespace)
-		}),
-	)
-	if err != nil {
-		h.Log.Info("skipping Secret due to htpasswd scan error",
-			"name", secret.Name, "namespace", secret.Namespace)
-		return nil, err
-	}
-	if hasBadLine || passwd == nil {
-		return nil, fmt.Errorf("malformed or empty htpasswd data")
+	passwd, ok := h.parseSecret(secret)
+	if !ok {
+		return nil, fmt.Errorf("secret has no usable htpasswd data")
 	}
 
 	h.Creds.Mu.Lock()
@@ -216,19 +207,57 @@ func (h *Htpasswd) verifyFetchSecretData(secret *v1.Secret) (bool, []byte) {
 	return true, authData
 }
 
+// parseSecret checks the Secret against our realm and parses its htpasswd data.
+// Parse errors are not logged since they may echo credential lines.
+func (h *Htpasswd) parseSecret(s *v1.Secret) (*htpasswd.File, bool) {
+	isVerified, authData := h.verifyFetchSecretData(s)
+	if !isVerified {
+		return nil, false
+	}
+
+	hasBadLine := false
+
+	passwd, err := htpasswd.NewFromReader(
+		bytes.NewBuffer(authData),
+		htpasswd.DefaultSystems,
+		htpasswd.BadLineHandler(func(_ error) {
+			hasBadLine = true
+		}),
+	)
+	if err != nil {
+		h.Log.Info("skipping Secret due to htpasswd scan error",
+			"name", s.Name, "namespace", s.Namespace)
+		return nil, false
+	}
+
+	if hasBadLine {
+		h.Log.Info("skipping Secret with malformed htpasswd line syntax",
+			"name", s.Name, "namespace", s.Namespace)
+		return nil, false
+	}
+
+	if passwd == nil {
+		h.Log.Info("skipping Secret with empty credentials",
+			"name", s.Name, "namespace", s.Namespace)
+		return nil, false
+	}
+
+	return passwd, true
+}
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	var opts []client.ListOption
-
 	// restricts the list operation to the given namespace
-	if req.Namespace != "" {
-		opts = append(opts, client.InNamespace(req.Namespace))
-	}
+	opts := []client.ListOption{client.InNamespace(req.Namespace)}
 
 	if h.Selector != nil {
 		opts = append(opts, client.MatchingLabelsSelector{Selector: h.Selector})
 	}
+
+	// Serialize with fetchAndCacheSecret, see there.
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
 
 	secrets := &v1.SecretList{}
 	if err := h.Client.List(ctx, secrets, opts...); err != nil {
@@ -237,58 +266,16 @@ func (h *Htpasswd) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result
 
 	newSecretPasswdMap := make(map[string]*htpasswd.File)
 
-	for _, secret := range secrets.Items {
-		// avoid implicit memory aliasing in for loop
-		s := secret
+	for i := range secrets.Items {
+		s := &secrets.Items[i]
 
-		isVerified, authData := h.verifyFetchSecretData(&s)
-		if !isVerified {
-			continue
+		if passwd, ok := h.parseSecret(s); ok {
+			newSecretPasswdMap[s.Name] = passwd
 		}
-
-		hasBadLine := false
-
-		passwd, err := htpasswd.NewFromReader(
-			bytes.NewBuffer(authData),
-			htpasswd.DefaultSystems,
-			htpasswd.BadLineHandler(func(_ error) {
-				hasBadLine = true
-				h.Log.Info("skipping Secret with malformed htpasswd line syntax",
-					"name", s.Name, "namespace", s.Namespace)
-			}),
-		)
-		if err != nil {
-			h.Log.Info("skipping Secret due to htpasswd scan error",
-				"name", s.Name, "namespace", s.Namespace)
-			continue
-		}
-
-		if hasBadLine {
-			continue
-		}
-
-		if passwd == nil {
-			h.Log.Info("skipping Secret with empty credentials",
-				"name", s.Name, "namespace", s.Namespace)
-			continue
-		}
-
-		newSecretPasswdMap[s.Name] = passwd
 	}
 
 	h.Creds.Mu.Lock()
-	if req.Namespace != "" {
-		h.Creds.Map[req.Namespace] = newSecretPasswdMap
-	} else {
-		for _, s := range secrets.Items {
-			if passwd, ok := newSecretPasswdMap[s.Name]; ok {
-				if h.Creds.Map[s.Namespace] == nil {
-					h.Creds.Map[s.Namespace] = make(map[string]*htpasswd.File)
-				}
-				h.Creds.Map[s.Namespace][s.Name] = passwd
-			}
-		}
-	}
+	h.Creds.Map[req.Namespace] = newSecretPasswdMap
 	h.Creds.Mu.Unlock()
 
 	// Mark as ready after successful reconciliation

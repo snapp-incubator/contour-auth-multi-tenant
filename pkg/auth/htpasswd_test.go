@@ -562,3 +562,92 @@ func TestHtpasswd_SecretUpdatedToMalformed(t *testing.T) {
 	result := auth.Match("validuser", "example1", "test-ns/test-secret")
 	assert.False(t, result, "User should NOT be able to authenticate after secret is malformed")
 }
+
+func TestHtpasswd_SecretDeletedRevokesAccess(t *testing.T) {
+	secret := &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-secret",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"auth.contour.snappcloud.io/type": "basic"},
+			Annotations: map[string]string{
+				AnnotationAuthRealm: "*",
+			},
+		},
+		Type: v1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"auth": []byte("validuser:$apr1$WBCC5B.w$fUu8qiKG/rLdMs3OTy9gc0"),
+		},
+	}
+
+	client := fake.NewClientBuilder().WithRuntimeObjects(secret).Build()
+	selector, _ := labels.Parse("auth.contour.snappcloud.io/type=basic")
+
+	auth := &Htpasswd{
+		Log:    logr.New(log.NullLogSink{}),
+		Realm:  "default",
+		Client: client,
+		Creds: &Creds{
+			Map: make(map[string]map[string]*htpasswd.File),
+			Mu:  &sync.RWMutex{},
+		},
+		Mu:       &sync.Mutex{},
+		Selector: selector,
+	}
+
+	// Loaded on demand, without Reconcile.
+	assert.True(t, auth.Match("validuser", "example1", "test-ns/test-secret"))
+
+	require.NoError(t, client.Delete(context.Background(), secret))
+
+	_, err := auth.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "test-ns", Name: "test-secret"},
+	})
+	require.NoError(t, err)
+
+	// The on-demand fallback must not bring the deleted Secret back.
+	assert.False(t, auth.Match("validuser", "example1", "test-ns/test-secret"))
+}
+
+func TestHtpasswd_ConcurrentMatchAndReconcile(t *testing.T) {
+	client := fake.NewClientBuilder().WithRuntimeObjects(
+		&v1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        "test-secret",
+				Namespace:   "test-ns",
+				Annotations: map[string]string{AnnotationAuthRealm: "*"},
+			},
+			Type: v1.SecretTypeOpaque,
+			Data: map[string][]byte{
+				"auth": []byte("validuser:$apr1$WBCC5B.w$fUu8qiKG/rLdMs3OTy9gc0"),
+			},
+		},
+	).Build()
+
+	auth := &Htpasswd{
+		Log:    logr.New(log.NullLogSink{}),
+		Realm:  "default",
+		Client: client,
+		Creds: &Creds{
+			Map: make(map[string]map[string]*htpasswd.File),
+			Mu:  &sync.RWMutex{},
+		},
+		Mu: &sync.Mutex{},
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			assert.True(t, auth.Match("validuser", "example1", "test-ns/test-secret"))
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := auth.Reconcile(context.Background(), ctrl.Request{
+				NamespacedName: types.NamespacedName{Namespace: "test-ns", Name: "test-secret"},
+			})
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+}

@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/spf13/cobra"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -193,9 +194,15 @@ func runHtpasswd(cmd *cobra.Command) error {
 	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
 	defer cancel()
 
-	// Mark ready after cache syncs. Handles clusters with no matching secrets
-	// where Reconcile is never triggered (no events = no reconcile calls).
+	// Mark ready after the Secret informer syncs. Handles clusters with no matching secrets
+	// where Reconcile is never triggered (no events = no reconcile calls). WaitForCacheSync
+	// only waits for informers that already exist, so register the Secret informer first;
+	// otherwise it can return before the controller has created it.
 	go func() {
+		if _, err := mgr.GetCache().GetInformer(ctx, &v1.Secret{}); err != nil {
+			log.Error(err, "failed to get Secret informer")
+			return
+		}
 		if mgr.GetCache().WaitForCacheSync(ctx) {
 			healthChecker.SetReady()
 		}

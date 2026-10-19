@@ -307,7 +307,8 @@ func (o *OIDCConnect) getStateFromCookie(req *Request) (*store.OIDCState, error)
 
 // initProvider initialize oidc provide with ths given issuer URL. return oidc.Provider.
 func (o *OIDCConnect) initProvider(ctx context.Context) (*oidc.Provider, error) {
-	provider, err := oidc.NewProvider(ctx, o.OidcConfig.IssuerURL)
+	// Discovery and JWKS refreshes must use our client (with timeout), not http.DefaultClient.
+	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, o.HTTPClient), o.OidcConfig.IssuerURL)
 	if err != nil {
 		o.Log.Error(err, "Unable to initialize provider", "issuerUrl", o.OidcConfig.IssuerURL)
 		return nil, err
